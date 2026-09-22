@@ -1,0 +1,163 @@
+/**
+ * Central config. Env names are kept identical to the previous FastAPI backend
+ * so a single root .env still drives the whole stack.
+ */
+export interface AppConfig {
+  appName: string;
+  appEnv: string;
+  debug: boolean;
+  port: number;
+  /** 'api' serves HTTP, 'worker' only consumes the BullMQ queue + cron. */
+  role: 'api' | 'worker';
+  allowedOrigins: string[];
+}
+
+const toBool = (v: string | undefined, fallback = false): boolean =>
+  v === undefined ? fallback : ['1', 'true', 'yes', 'on'].includes(v.toLowerCase());
+
+const toInt = (v: string | undefined, fallback: number): number => {
+  const n = Number.parseInt(v ?? '', 10);
+  return Number.isNaN(n) ? fallback : n;
+};
+
+export default () => ({
+  app: {
+    appName: process.env.APP_NAME ?? 'SOC AI Suggestion',
+    appEnv: process.env.APP_ENV ?? 'development',
+    debug: toBool(process.env.DEBUG),
+    port: toInt(process.env.PORT, 8000),
+    role: (process.env.APP_ROLE ?? 'api') as 'api' | 'worker',
+    allowedOrigins: (process.env.ALLOWED_ORIGINS ?? 'http://localhost:3000')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean),
+  },
+  jwt: {
+    secret: process.env.JWT_SECRET_KEY ?? 'change-me-in-production-use-long-random-string',
+    algorithm: process.env.JWT_ALGORITHM ?? 'HS256',
+    accessExpireMinutes: toInt(process.env.JWT_ACCESS_EXPIRE_MINUTES, 15),
+    refreshExpireDays: toInt(process.env.JWT_REFRESH_EXPIRE_DAYS, 7),
+  },
+  redis: {
+    host: process.env.REDIS_HOST ?? 'soc-redis',
+    port: toInt(process.env.REDIS_PORT, 6379),
+    db: toInt(process.env.REDIS_DB, 0),
+  },
+  ai: {
+    /** Base URL of the Python AI service (../ai-service). */
+    baseUrl: process.env.AI_SERVICE_URL ?? 'http://soc-ai:8100',
+    /** Reported back to callers / stored on the job row. */
+    model: process.env.OLLAMA_MODEL ?? 'qwen2.5:7b',
+    /**
+     * The agent behind the first answer: one call, no tools, producing the
+     * suggestion and the list of what it would want from Splunk. Naming it
+     * here rather than leaving it to the AI service's default keeps the two
+     * stages from silently becoming the same agent again.
+     */
+    suggestAgent: process.env.LLM_SUGGEST_AGENT ?? 'soc-suggest',
+    /**
+     * How long to wait on soc-ai. This is the whole chain — soc-ai calls the
+     * LLM server, which runs the analysing agent, which delegates to the
+     * query agent, which queries Splunk — so it has to be longer than the
+     * LLM server's own LLM_TIMEOUT, not shorter. At 120s every job died on
+     * a timeout while the agents were still working.
+     *
+     * OLLAMA_TIMEOUT is still read for older .env files, but the backend has
+     * not spoken to Ollama since the LLM server took over inference.
+     */
+    timeoutMs:
+      toInt(process.env.AI_SERVICE_TIMEOUT ?? process.env.OLLAMA_TIMEOUT, 1920) *
+      1000,
+  },
+  playbook: {
+    /**
+     * The Confluence connector. Asked once per alert, before the model runs:
+     * which runbook covers this, and what does it say makes it real.
+     * Unset means the step is skipped — a weaker suggestion, not a failure.
+     */
+    url: process.env.CONFLUENCE_MCP_URL ?? '',
+    token: process.env.CONFLUENCE_MCP_AUTH_TOKEN ?? '',
+    timeoutMs: toInt(process.env.PLAYBOOK_TIMEOUT, 15) * 1000,
+  },
+  splunk: {
+    /**
+     * The Splunk connector's HTTP base. Used for planned searches, which the
+     * backend runs itself — the connector's /search route, not its MCP tools.
+     */
+    url: process.env.SPLUNK_MCP_URL ?? 'http://soc-mcp-splunk:8200',
+    token: process.env.MCP_AUTH_TOKEN ?? '',
+    // A planned search is one Splunk call. The 0.4s measured here is typical;
+    // this is a ceiling on a slow search head, not a budget for inference.
+    timeoutMs: toInt(process.env.SPLUNK_SEARCH_TIMEOUT, 120) * 1000,
+  },
+  lookup: {
+    /**
+     * 'manual' | 'auto' — when the Splunk stage runs.
+     *
+     * manual keeps the requirements on the job row and waits for someone to
+     * press the button. Each requirement costs a full agent run, and on a box
+     * without a GPU that is minutes; making it deliberate means that time is
+     * spent on alerts a person actually wants it spent on.
+     */
+    mode: (process.env.SPLUNK_LOOKUP_MODE ?? 'manual').toLowerCase() === 'auto'
+      ? 'auto'
+      : 'manual',
+    /**
+     * Which agent handles a requirement the backend could not plan. A planned
+     * one never reaches it: the connector is called directly, which is the
+     * difference between 0.4 seconds and eight minutes.
+     */
+    agent: process.env.SPLUNK_LOOKUP_AGENT ?? 'splunk-query',
+    /** A cap on how many of stage 1's requirements are actually run. */
+    maxRequirements: toInt(process.env.SPLUNK_LOOKUP_MAX_REQUIREMENTS, 5),
+  },
+  admin: {
+    username: process.env.DEFAULT_ADMIN_USERNAME ?? 'admin',
+    /**
+     * No default, on purpose.
+     *
+     * A fallback here is a password that ships in the source, and the seed only
+     * creates the admin once — so a deployment that never set this has an
+     * account whose password is public and no sign that anything is wrong.
+     * Empty means the seed refuses and says what to set.
+     */
+    password: process.env.DEFAULT_ADMIN_PASSWORD ?? '',
+    email: process.env.DEFAULT_ADMIN_EMAIL ?? 'admin@soc.local',
+  },
+  retention: {
+    jobsDays: toInt(process.env.RETENTION_DAYS_JOBS, 30),
+    auditDays: toInt(process.env.RETENTION_DAYS_AUDIT, 90),
+    cleanupHour: toInt(process.env.CLEANUP_HOUR, 2),
+    cleanupMinute: toInt(process.env.CLEANUP_MINUTE, 0),
+  },
+
+  enrichment: {
+    // Which index holds the logs for the device that raised an alert. The SOAR
+    // already names the device, so the first place to search is a lookup rather
+    // than something the model has to work out.
+    //   ALERT_SOURCE_MAP=fortigate=network:fortigate_traffic,crowdstrike=endpoint
+    sourceMap: process.env.ALERT_SOURCE_MAP ?? '',
+    // Log families identified by which fields they carry, for alerts forwarded
+    // raw rather than as ES notables:
+    //   ALERT_SOURCE_SIGNATURES=eventSource+awsRegion=cloud:aws:cloudtrail
+    sourceSignatures: process.env.ALERT_SOURCE_SIGNATURES ?? '',
+
+    // Indicators that belong to us. An internal address or domain is not worth
+    // a threat-intelligence call, and a "no record" reply for one is exactly
+    // what gets misread as "clean".
+    internal: (process.env.ENRICHMENT_INTERNAL_VALUES ?? '')
+      .split(',')
+      .map((v) => v.trim().toLowerCase())
+      .filter(Boolean),
+    threatq: {
+      // The ThreatQ gateway's HTTP lookup route. Blank disables enrichment,
+      // and the summary then says the check did not happen.
+      url: process.env.THREATQ_LOOKUP_URL ?? '',
+      token: process.env.THREATQ_MCP_AUTH_TOKEN ?? '',
+      timeoutMs: Number.parseInt(process.env.THREATQ_LOOKUP_TIMEOUT_MS ?? '15000', 10),
+      // One alert can carry dozens of addresses; looking up all of them costs
+      // the platform more than the answer is worth.
+      maxIndicators: Number.parseInt(process.env.THREATQ_MAX_INDICATORS ?? '25', 10),
+    },
+  },
+});

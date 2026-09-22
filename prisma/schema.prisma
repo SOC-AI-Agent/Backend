@@ -1,0 +1,190 @@
+// Maps onto the exact tables the previous FastAPI/SQLAlchemy backend created,
+// so an existing socai database keeps working without a data migration.
+// Enum type names (jobstatus/eventtype/actortype) and labels follow SQLAlchemy's
+// defaults: the PG enum stores the *member name*, e.g. "PENDING", not "pending".
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("CORE_DATABASE_URL")
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+
+  @@map("jobstatus")
+}
+
+/**
+ * The Splunk lookup is a second stage, and it has its own life.
+ *
+ * Deliberately not folded into JobStatus: a job is COMPLETED once the
+ * suggestion is ready, which is what the analyst waits for and what
+ * processing_time_ms measures. Whether anyone went on to spend ten minutes of
+ * inference searching Splunk is a different question with a different answer.
+ */
+enum LookupStatus {
+  NOT_REQUESTED
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+
+  @@map("lookupstatus")
+}
+
+enum EventType {
+  ANALYZE_REQUEST
+  JOB_QUEUED
+  JOB_PROCESSING
+  JOB_COMPLETED
+  JOB_FAILED
+  AUTH_LOGIN
+  AUTH_FAILED
+  AUTH_REFRESH
+  AUTH_KEY_FAILED
+  KEY_CREATED
+  KEY_REVOKED
+  USER_CREATED
+  USER_UPDATED
+  USER_DELETED
+  AUDIT_EXPORTED
+  SYSTEM_CLEANUP
+
+  @@map("eventtype")
+}
+
+enum ActorType {
+  USER
+  API_KEY
+  SYSTEM
+
+  @@map("actortype")
+}
+
+model Role {
+  id          Int     @id @default(autoincrement())
+  name        String  @unique @db.VarChar(50)
+  description String? @db.VarChar(255)
+
+  users User[]
+
+  @@map("roles")
+}
+
+model User {
+  id             String   @id @default(uuid()) @db.Uuid
+  username       String   @unique @db.VarChar(100)
+  email          String   @unique @db.VarChar(255)
+  hashedPassword String   @map("hashed_password")
+  isActive       Boolean  @default(true) @map("is_active")
+  roleId         Int      @map("role_id")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  role    Role     @relation(fields: [roleId], references: [id])
+  apiKeys ApiKey[]
+  jobs    AiJob[]
+
+  @@index([username])
+  @@map("users")
+}
+
+model ApiKey {
+  id         String    @id @default(uuid()) @db.Uuid
+  name       String    @db.VarChar(100)
+  keyPrefix  String    @map("key_prefix") @db.VarChar(15)
+  hashedKey  String    @map("hashed_key") @db.VarChar(64)
+  ownerId    String    @map("owner_id") @db.Uuid
+  isActive   Boolean   @default(true) @map("is_active")
+  expiresAt  DateTime? @map("expires_at") @db.Timestamptz(6)
+  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  owner User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  jobs  AiJob[]
+
+  @@index([keyPrefix])
+  @@map("api_keys")
+}
+
+model AiJob {
+  jobId            String    @id @default(uuid()) @map("job_id") @db.Uuid
+  alertId          String    @map("alert_id") @db.VarChar(100)
+  alertName        String    @map("alert_name") @db.VarChar(255)
+  rawLog           String    @map("raw_log")
+  renderedPrompt   String?   @map("rendered_prompt")
+  apiKeyId         String?   @map("api_key_id") @db.Uuid
+  status           JobStatus @default(PENDING)
+  aiResponse       String?   @map("ai_response")
+  // What was established before the model ran — indicators extracted from the
+  // alert and what threat intelligence said about them. Kept apart from
+  // aiResponse because it is checkable: the model's prose can be wrong about
+  // it, and then the two disagree visibly.
+  evidence         Json?     @map("evidence")
+
+  // ── the Splunk stage ──────────────────────────────────────────────────
+  // What the first model said it needs, in its own words. Written by stage 1
+  // and read by stage 2, so the requirement the analyst approves is the one
+  // that gets searched — not something re-derived later from the same alert.
+  splunkRequirements Json?        @map("splunk_requirements")
+  lookupStatus       LookupStatus @default(NOT_REQUESTED) @map("lookup_status")
+  lookupResult       Json?        @map("lookup_result")
+  lookupError        String?      @map("lookup_error")
+  lookupTimeMs       Int?         @map("lookup_time_ms")
+  lookupStartedAt    DateTime?    @map("lookup_started_at")
+  lookupCompletedAt  DateTime?    @map("lookup_completed_at")
+  // The agent run on the LLM server. Its trace holds what the analysing
+  // agent asked the query agent for, and what came back.
+  agentRunId       String?   @map("agent_run_id")
+  errorMessage     String?   @map("error_message")
+  modelUsed        String?   @map("model_used") @db.VarChar(100)
+  processingTimeMs Int?      @map("processing_time_ms")
+  tokensPrompt     Int?      @map("tokens_prompt")
+  tokensEval       Int?      @map("tokens_eval")
+  ownerId          String?   @map("owner_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  completedAt      DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  apiKey    ApiKey?    @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+  owner     User?      @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  auditLogs AuditLog[]
+
+  @@index([alertId])
+  @@index([status])
+  @@index([ownerId])
+  @@index([createdAt])
+  @@map("ai_jobs")
+}
+
+model AuditLog {
+  id                 BigInt    @id @default(autoincrement())
+  eventType          EventType @map("event_type")
+  actorType          ActorType @map("actor_type")
+  actorId            String?   @map("actor_id") @db.VarChar(100)
+  actorLabel         String?   @map("actor_label") @db.VarChar(150)
+  endpoint           String?   @db.VarChar(255)
+  httpMethod         String?   @map("http_method") @db.VarChar(10)
+  ipAddress          String?   @map("ip_address") @db.VarChar(50)
+  userAgent          String?   @map("user_agent")
+  jobId              String?   @map("job_id") @db.Uuid
+  promptSnapshot     String?   @map("prompt_snapshot")
+  aiResponseSnapshot String?   @map("ai_response_snapshot")
+  statusCode         Int?      @map("status_code")
+  durationMs         Int?      @map("duration_ms")
+  extraData          Json?     @map("extra_data")
+  timestamp          DateTime  @default(now()) @db.Timestamptz(6)
+
+  job AiJob? @relation(fields: [jobId], references: [jobId], onDelete: SetNull)
+
+  @@index([eventType])
+  @@index([jobId])
+  @@index([timestamp])
+  @@map("audit_logs")
+}

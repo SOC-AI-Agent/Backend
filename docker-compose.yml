@@ -1,0 +1,89 @@
+# The core backend: API, queue worker, database and Redis.
+#
+# The only writer to the database, and the only thing that owns job state.
+#
+#   cp .env.example .env
+#   docker compose up -d --build
+#
+# Needs, over soc-network: soc-ai (the AI service), soc-mcp-splunk and
+# soc-mcp-confluence. It starts without them and each call that needs one fails
+# with a message naming it, rather than the stack refusing to come up.
+
+services:
+  soc-db:
+    image: postgres:16-alpine
+    container_name: soc-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-socai}
+      POSTGRES_USER: ${POSTGRES_USER:-socai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-socai_secret}
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-socai}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks: [soc-network]
+
+  soc-redis:
+    image: redis:7-alpine
+    container_name: soc-redis
+    command: redis-server --appendonly yes
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks: [soc-network]
+
+  soc-core-api:
+    build: .
+    container_name: soc-core-api
+    command: node dist/main.js
+    environment:
+      APP_ROLE: api
+    ports: ["8000:8000"]
+    env_file: [.env]
+    volumes:
+      # The data catalogue and the lookup plans, owned by soc-mcp-server. The
+      # backend reads them to aim a search at the right index and field before
+      # any model runs — the one cross-repo file dependency, and it is
+      # read-only on this side.
+      - ${MCP_CATALOG_PATH:-../soc-mcp-server/Splunk/catalog}:/catalog:ro
+    depends_on:
+      soc-db: {condition: service_healthy}
+      soc-redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks: [soc-network]
+
+  soc-core-worker:
+    build: .
+    container_name: soc-core-worker
+    command: node dist/main.js
+    environment:
+      APP_ROLE: worker
+    env_file: [.env]
+    volumes:
+      - ${MCP_CATALOG_PATH:-../soc-mcp-server/Splunk/catalog}:/catalog:ro
+    depends_on:
+      soc-db: {condition: service_healthy}
+      soc-redis: {condition: service_healthy}
+    restart: unless-stopped
+    networks: [soc-network]
+
+volumes:
+  postgres-data:
+  redis-data:
+
+networks:
+  soc-network:
+    name: soc-network
+    driver: bridge

@@ -1,0 +1,49 @@
+{
+  "name": "soc-core-api",
+  "version": "1.0.0",
+  "description": "SOC AI Suggestion — central backend (NestJS). Owns auth, users, API keys, audit logs and the alert-analysis job lifecycle.",
+  "private": true,
+  "scripts": {
+    "build": "nest build",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:prod": "node dist/main.js",
+    "start:worker": "APP_ROLE=worker node dist/main.js",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push",
+    "prisma:migrate": "prisma migrate deploy",
+    "seed": "node dist/seed.js"
+  },
+  "dependencies": {
+    "@nestjs/axios": "^12.0.0",
+    "@nestjs/bullmq": "^12.0.0",
+    "@nestjs/common": "^12.0.1",
+    "@nestjs/config": "^12.0.0",
+    "@nestjs/core": "^12.0.1",
+    "@nestjs/jwt": "^12.0.1",
+    "@nestjs/platform-express": "^12.0.1",
+    "@nestjs/schedule": "^12.0.1",
+    "@nestjs/swagger": "^12.0.1",
+    "@prisma/client": "^6.19.3",
+    "axios": "^1.8.4",
+    "bcrypt": "^6.0.0",
+    "bullmq": "^6.3.4",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
+    "ioredis": "^5.11.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^12.0.0",
+    "@nestjs/schematics": "^12.0.0",
+    "@types/express": "^5.0.1",
+    "@types/node": "^22.13.14",
+    "prisma": "^6.19.3",
+    "typescript": "^6.0.3"
+  },
+  "overrides": {
+    "multer": "^2.3.0",
+    "deepmerge-ts": "^8.0.2"
+  }
+}

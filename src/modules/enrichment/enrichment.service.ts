@@ -1,0 +1,149 @@
+import { Injectable, Logger } from '@nestjs/common';
+
+import { Indicator, IocService } from './ioc.service';
+import { PlaybookMatch, PlaybookService } from './playbook.service';
+import { QueryPlanService, SuggestedLookup } from './query-plan.service';
+import { SourceHint, SourceMapService } from './source-map.service';
+import { ThreatQResult, ThreatQService } from './threatq.service';
+
+export interface Enrichment {
+  indicators: Indicator[];
+  skipped: Array<{ value: string; reason: string }>;
+  threatq: ThreatQResult;
+  source: SourceHint | null;
+  lookups: SuggestedLookup[];
+  /**
+   * The anchor every search uses: when the alert fired, not when a search runs.
+   * Carried on the result so anything planning a lookup later — including a
+   * button pressed the next morning — uses the same one.
+   */
+  alertTime: Date;
+  /**
+   * What the runbook says about this detection, when one covers it.
+   *
+   * The part of triage the log cannot supply: what makes this a true positive
+   * and what makes it noise. Without it a suggestion can say what happened and
+   * not whether it matters.
+   */
+  playbook: PlaybookMatch | null;
+}
+
+/**
+ * Everything worth knowing before the model sees the alert.
+ *
+ * Runs in the worker, deterministically, so the agent starts with the
+ * indicators already extracted and already checked. That leaves it one
+ * decision to make — whether the alert needs log data — instead of four.
+ */
+@Injectable()
+export class EnrichmentService {
+  private readonly logger = new Logger(EnrichmentService.name);
+
+  constructor(
+    private readonly ioc: IocService,
+    private readonly threatq: ThreatQService,
+    private readonly sourceMap: SourceMapService,
+    private readonly queryPlan: QueryPlanService,
+    private readonly playbook: PlaybookService,
+  ) {}
+
+  async run(
+    rawLog: string,
+    supplied?: Array<{ type: string; value: string; source?: string }>,
+    alertName = '',
+    alertFields?: Record<string, unknown>,
+    // When the alert fired, not when this runs. The searches are anchored to
+    // it, so pressing the button a day later still looks where the alert is.
+    alertTime: Date = new Date(),
+  ): Promise<Enrichment> {
+    const { indicators: fromSoar } = this.ioc.normalise(supplied);
+    const { indicators, skipped } = this.ioc.extract(rawLog, fromSoar);
+    const threatq = await this.threatq.lookup(indicators);
+    const source = this.sourceMap.resolve(alertName, rawLog, alertFields);
+    // Asked in parallel with nothing, because it is one HTTP call and the
+    // model cannot start until the whole block is ready anyway.
+    const playbook = await this.playbook.match(alertName);
+    const lookups = this.queryPlan.build(
+      indicators, source, alertName, rawLog, alertTime, playbook,
+    );
+    this.logger.log(
+      `extracted ${indicators.length} indicators (${skipped.length} skipped), ` +
+        `ThreatQ ${threatq.available ? `checked ${threatq.checked}, ${threatq.hits.length} hits` : 'unavailable'}, `
+        + `${lookups.length} lookups suggested`,
+    );
+    return { indicators, skipped, threatq, source, lookups, alertTime, playbook };
+  }
+
+  /**
+   * The enrichment as the model should read it.
+   *
+   * Written as facts with their source attached, and explicit about what was
+   * NOT established — "no threat-intelligence record" is a different statement
+   * from "clean", and a model given the short version will print the wrong one.
+   */
+  render(enrichment: Enrichment): string {
+    const lines: string[] = [];
+    const { indicators, skipped, threatq } = enrichment;
+
+    // First, because it defines what a true positive is here. The rest is
+    // evidence to be read against that, and evidence read without a
+    // definition is where a model starts inventing one.
+    const playbook = this.playbook.render(enrichment.playbook);
+    if (playbook) lines.push(playbook, '');
+    lines.push(this.sourceMap.render(enrichment.source), '');
+    lines.push('--- EXTRACTED INDICATORS ---');
+    if (indicators.length === 0) {
+      lines.push('(none found in the alert)');
+    } else {
+      for (const i of indicators) {
+        lines.push(`${i.type}: ${i.value}  (from ${i.source})`);
+      }
+    }
+    if (skipped.length > 0) {
+      lines.push(
+        `Not looked up: ${skipped.map((s) => `${s.value} (${s.reason})`).join('; ')}`,
+      );
+    }
+
+    lines.push('', '--- THREAT INTELLIGENCE (ThreatQ) ---');
+    if (!threatq.available) {
+      lines.push(
+        `NOT CHECKED — ${threatq.error ?? 'lookup unavailable'}.`,
+        'Treat every indicator above as UNKNOWN. Do not describe anything as clean.',
+      );
+    } else if (threatq.hits.length === 0) {
+      lines.push(
+        `${threatq.checked} indicator(s) checked, no records found.`,
+        'No record means ThreatQ has not seen it. That is UNKNOWN, not safe —',
+        'threat intelligence trails an attacker, and new infrastructure has no record yet.',
+      );
+    } else {
+      for (const hit of threatq.hits) {
+        const detail = [
+          hit.score !== undefined ? `score ${hit.score}` : null,
+          hit.status ? `status ${hit.status}` : null,
+          hit.sources?.length ? `${hit.sources.length} source(s): ${hit.sources.join(', ')}` : null,
+          hit.adversaries?.length ? `adversary ${hit.adversaries.join(', ')}` : null,
+          hit.first_seen ? `first seen ${hit.first_seen}` : null,
+        ]
+          .filter(Boolean)
+          .join(', ');
+        lines.push(`${hit.value} — ${detail}`);
+      }
+      const clean = threatq.checked - threatq.hits.length;
+      if (clean > 0) {
+        lines.push(`${clean} other indicator(s) checked with no record — unknown, not safe.`);
+      }
+    }
+    // The derived lookups are deliberately NOT shown here any more.
+    //
+    // They used to be, when an agent held ask_splunk and had to pick from
+    // something. Now the model is asked what it wants and the backend runs it,
+    // and a list in the prompt turns that into a copying exercise — observed
+    // exactly: the reply came back quoting one of these lines verbatim, which
+    // then named no indicator and could not be aimed. The plan still exists as
+    // the fallback for a reply that asks for nothing usable.
+
+    return lines.join('\n');
+  }
+}
