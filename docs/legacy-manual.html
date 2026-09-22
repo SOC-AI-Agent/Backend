@@ -1,0 +1,1220 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SOC AI Manual v1.3.5</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=JetBrains+Mono&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0f172a;
+            --card: #1e293b;
+            --text: #f1f5f9;
+            --muted: #94a3b8;
+            --primary: #38bdf8;
+            --border: #334155;
+            --code-bg: #000000;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            margin: 0;
+            padding: 40px 20px;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: var(--card);
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+            border: 1px solid var(--border);
+        }
+        h1, h2, h3 { color: var(--primary); margin-top: 1.5em; }
+        h1 { border-bottom: 2px solid var(--border); padding-bottom: 10px; }
+        code {
+            font-family: 'JetBrains Mono', monospace;
+            background: var(--code-bg);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            color: #ff79c6;
+        }
+        pre {
+            background: var(--code-bg);
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+            border: 1px solid var(--border);
+        }
+        pre code { color: #bd93f9; padding: 0; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            padding: 12px;
+            border: 1px solid var(--border);
+            text-align: left;
+        }
+        th { background: #0f172a; color: var(--primary); }
+        blockquote {
+            border-left: 4px solid var(--primary);
+            margin: 20px 0;
+            padding: 10px 20px;
+            background: rgba(56, 189, 248, 0.1);
+            color: var(--muted);
+        }
+        hr { border: 0; border-top: 1px solid var(--border); margin: 40px 0; }
+        .toc { background: #0f172a; padding: 20px; border-radius: 8px; margin-bottom: 40px; }
+        a { color: var(--primary); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 id="soc-ai-suggestion-developer-operator-manual">SOC AI Suggestion — Developer &amp; Operator Manual</h1>
+<p><strong>Version:</strong> 1.3.5 | <strong>Last Updated:</strong> 2026-05-14 | <strong>Model:</strong> qwen2.5:7b (CPU)</p>
+<hr />
+<h2 id="1-system-overview">1. System Overview</h2>
+<p>SOC AI Suggestion เป็น middleware ที่รับ Alert จาก SOAR แล้วส่งไปวิเคราะห์ด้วย AI (Ollama) และคืน Suggestion กลับไปยัง SOAR</p>
+<h3 id="data-flow">Data Flow</h3>
+<pre><code>SOAR Playbook
+    │  POST /v1/analyze  (X-API-Key)
+    │  body: { alert_id, alert_name, raw_log, prompt }
+    ▼
+FastAPI Backend  ──→  Redis Queue (ARQ)
+                               │
+                               ▼ Worker dequeues
+                        AI Worker
+                          │ combines prompt + raw_log (Option B)
+                          ▼
+                       Ollama (qwen2.5:7b, CPU)
+                          │ AI response
+                          ▼
+                       PostgreSQL ← save result + audit log
+                               │
+SOAR  ←── GET /v1/results/{id} ──┘  (polling with API Key)
+</code></pre>
+<h3 id="option-b-prompt-rendering">Option B — Prompt Rendering</h3>
+<p>ระบบ <strong>รวม prompt + raw_log ให้อัตโนมัติ</strong> ก่อนส่งให้ AI:</p>
+<pre><code>[SOAR prompt / instruction จาก Playbook]
+
+--- RAW LOG ---
+[raw_log จาก SOAR]
+--- END OF LOG ---
+</code></pre>
+<p>SOAR ส่งแค่ instruction ใน <code>prompt</code> field — ไม่ต้อง embed log เองใน prompt</p>
+<hr />
+<h2 id="2-docker-services">2. Docker Services</h2>
+<table>
+<thead>
+<tr>
+<th>Service</th>
+<th>Image</th>
+<th>Port</th>
+<th>หน้าที่</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>soc-db</code></td>
+<td>postgres:16-alpine</td>
+<td>5432 (internal)</td>
+<td>PostgreSQL database</td>
+</tr>
+<tr>
+<td><code>soc-redis</code></td>
+<td>redis:7-alpine</td>
+<td>6379 (internal)</td>
+<td>ARQ job queue</td>
+</tr>
+<tr>
+<td><code>soc-ollama</code></td>
+<td>ollama/ollama</td>
+<td>11434 (internal)</td>
+<td>AI engine (CPU)</td>
+</tr>
+<tr>
+<td><code>soc-backend</code></td>
+<td>custom FastAPI</td>
+<td><strong>8000</strong> → 8000</td>
+<td>REST API</td>
+</tr>
+<tr>
+<td><code>soc-worker</code></td>
+<td>custom ARQ</td>
+<td>—</td>
+<td>Background job processor</td>
+</tr>
+<tr>
+<td><code>soc-frontend</code></td>
+<td>custom Nginx</td>
+<td><strong>3000</strong> → 80</td>
+<td>Admin Dashboard</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="3-deployment-guide">3. Deployment Guide</h2>
+<h3 id="31-prerequisites">3.1 Prerequisites</h3>
+<ul>
+<li>Docker Desktop (Windows) หรือ Docker Engine + Compose v2 (Linux)</li>
+<li>RAM ≥ 16GB (Ollama CPU mode ใช้ ~10GB)</li>
+<li>Disk ≥ 20GB (Ollama model ~4.7GB)</li>
+</ul>
+<h3 id="32-first-time-setup">3.2 First-Time Setup</h3>
+<pre><code class="language-bash"># 1. เข้าโฟลเดอร์โปรเจกต์
+cd &quot;e:\TI Script\SOC AI&quot;
+
+# 2. สร้างไฟล์ config
+copy .env.example .env
+
+# 3. แก้ไขค่าสำคัญใน .env
+#    - POSTGRES_PASSWORD
+#    - JWT_SECRET_KEY  (ต้องยาวอย่างน้อย 32 ตัวอักษร)
+#    - DEFAULT_ADMIN_PASSWORD
+
+# 4. Build + Start
+docker compose up -d --build
+
+# 5. ดาวน์โหลด AI Model (ครั้งแรกครั้งเดียว ~4.7GB)
+docker compose exec soc-ollama ollama pull qwen2.5:7b
+
+# 6. Init Database (ครั้งแรกครั้งเดียว)
+docker compose exec soc-backend python scripts/init_db.py
+</code></pre>
+<h3 id="33">3.3 เข้าใช้งาน</h3>
+<table>
+<thead>
+<tr>
+<th>URL</th>
+<th>คำอธิบาย</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>http://localhost:3000</td>
+<td>Admin Dashboard</td>
+</tr>
+<tr>
+<td>http://localhost:8000/docs</td>
+<td>Swagger API Docs</td>
+</tr>
+<tr>
+<td>http://localhost:8000/health</td>
+<td>Health Check</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Default Admin:</strong> <code>admin</code> / <code>Admin@1234!</code></p>
+<blockquote>
+<p>⚠️ เปลี่ยน password ทันทีหลัง login ครั้งแรก</p>
+</blockquote>
+<h3 id="34-daily-operations">3.4 Daily Operations</h3>
+<pre><code class="language-bash"># Start
+docker compose up -d
+
+# Stop
+docker compose down
+
+# Restart specific service
+docker compose restart soc-worker
+
+# View logs
+docker compose logs -f soc-backend
+docker compose logs -f soc-worker
+docker compose logs -f soc-ollama
+
+# Rebuild after code change
+docker compose up -d --build soc-backend soc-worker
+docker compose up -d --build soc-frontend
+</code></pre>
+<hr />
+<h2 id="4-soar-integration-guide">4. SOAR Integration Guide</h2>
+<h3 id="41-api-key">4.1 สร้าง API Key</h3>
+<ol>
+<li>Login → Admin UI (http://localhost:3000)</li>
+<li>ไปที่ <strong>API Keys</strong> → <strong>New API Key</strong></li>
+<li>ตั้งชื่อ เช่น <code>SOAR-Production</code></li>
+<li><strong>Copy key ทันที</strong> — จะแสดงครั้งเดียวเท่านั้น</li>
+<li>Format: <code>sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</code></li>
+</ol>
+<h3 id="42-alert-soar-playbook">4.2 ส่ง Alert จาก SOAR Playbook</h3>
+<pre><code class="language-bash">curl -X POST http://YOUR_SERVER:8000/v1/analyze \
+  -H &quot;X-API-Key: sk-YOUR_API_KEY&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{
+    &quot;alert_id&quot;:   &quot;ALT-2024-00123&quot;,
+    &quot;alert_name&quot;: &quot;Suspicious Outbound to Port 4444&quot;,
+    &quot;raw_log&quot;:    &quot;May 06 09:12:33 fw01 DENY TCP 192.168.1.50:54321 -&gt; 45.33.32.156:4444 flags:SYN&quot;,
+    &quot;prompt&quot;:     &quot;You are a SOC analyst. Analyze this firewall log. Determine: 1) Is this C2 traffic? 2) Severity (CRITICAL/HIGH/MEDIUM/LOW) 3) IOCs 4) Recommended actions.&quot;
+  }'
+</code></pre>
+<p><strong>Response (immediate):</strong></p>
+<pre><code class="language-json">{
+  &quot;job_id&quot;: &quot;550e8400-e29b-41d4-a716-446655440000&quot;,
+  &quot;status&quot;: &quot;queued&quot;,
+  &quot;estimated_wait_seconds&quot;: 60
+}
+</code></pre>
+<h3 id="43-polling">4.3 Polling ผลลัพธ์</h3>
+<pre><code class="language-bash"># Poll ทุก 10-15 วินาที จนได้ status = &quot;completed&quot;
+curl http://YOUR_SERVER:8000/v1/jobs/550e8400-e29b-41d4-a716-446655440000 \
+  -H &quot;X-API-Key: sk-YOUR_API_KEY&quot;
+</code></pre>
+<p><strong>Response (completed):</strong></p>
+<pre><code class="language-json">{
+  &quot;job_id&quot;: &quot;550e8400-...&quot;,
+  &quot;alert_id&quot;: &quot;ALT-2024-00123&quot;,
+  &quot;alert_name&quot;: &quot;Suspicious Outbound to Port 4444&quot;,
+  &quot;status&quot;: &quot;completed&quot;,
+  &quot;ai_response&quot;: &quot;SEVERITY: HIGH\nThis firewall log indicates potential C2 beacon activity...&quot;,
+  &quot;model_used&quot;: &quot;qwen2.5:7b&quot;,
+  &quot;processing_time_ms&quot;: 45230,
+  &quot;tokens_prompt&quot;: 120,
+  &quot;tokens_eval&quot;: 350,
+  &quot;created_at&quot;: &quot;2024-05-06T09:12:33Z&quot;,
+  &quot;completed_at&quot;: &quot;2024-05-06T09:13:18Z&quot;
+}
+</code></pre>
+<p><strong>Job Status Values:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>ความหมาย</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>queued</code></td>
+<td>รอ worker มารับ</td>
+</tr>
+<tr>
+<td><code>processing</code></td>
+<td>Worker กำลังส่งให้ Ollama</td>
+</tr>
+<tr>
+<td><code>completed</code></td>
+<td>ได้ผลแล้ว</td>
+</tr>
+<tr>
+<td><code>failed</code></td>
+<td>เกิด error (ดู <code>error_message</code>)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="44-use-cases-prompts">4.4 ตัวอย่าง Use Cases + Prompts</h3>
+<p><strong>C2 Detection (Firewall Log):</strong></p>
+<pre><code>You are a SOC analyst specializing in network security.
+Analyze the provided firewall log entry.
+Determine if this indicates Command &amp; Control (C2) communication.
+Respond with: Severity, Threat Type, Confidence, IOCs found, Summary, Recommended Actions.
+</code></pre>
+<p><strong>Malware Analysis (Endpoint Log):</strong></p>
+<pre><code>You are a malware analyst. Analyze this endpoint security log.
+Identify: malware family (if known), attack technique (MITRE ATT&amp;CK), 
+affected artifacts, and containment steps.
+</code></pre>
+<p><strong>Brute Force Detection (Auth Log):</strong></p>
+<pre><code>You are a SOC analyst. Review this authentication log for brute force patterns.
+Identify: source IP, targeted accounts, attack timeline, and recommend blocking rules.
+</code></pre>
+<h3 id="45-advanced-json-output-tier-1-guidance">4.5 Advanced: JSON Output &amp; Tier 1 Guidance</h3>
+<p>เพื่อให้ SOAR นำไปใช้งานต่อได้ง่ายขึ้น คุณควรสั่งให้ AI ตอบเป็น JSON และระบุคำแนะนำสำหรับเจ้าหน้าที่ Tier 1:</p>
+<p><strong>Example Prompt:</strong></p>
+<pre><code class="language-text">Analyze the security log provided. Your response must be in valid JSON format only.
+Include the following fields:
+- is_threat: (boolean)
+- severity: (Low, Medium, High, Critical)
+- analysis_summary: (Short summary of what happened)
+- tier1_steps: (List of specific actionable steps for a Tier 1 analyst)
+- recommendation: (Final decision: Close, Escalate, or Block)
+</code></pre>
+<p><strong>JSON Response Example:</strong></p>
+<pre><code class="language-json">{
+  &quot;is_threat&quot;: true,
+  &quot;severity&quot;: &quot;Medium&quot;,
+  &quot;analysis_summary&quot;: &quot;Suspicious HTTP traffic detected to a known proxy-related IP.&quot;,
+  &quot;tier1_steps&quot;: [
+    &quot;Verify the source IP's recent activity history.&quot;,
+    &quot;Check if the browser used has any malicious extensions.&quot;,
+    &quot;Cross-check the destination IP with threat intelligence feeds.&quot;
+  ],
+  &quot;recommendation&quot;: &quot;Escalate&quot;
+}
+</code></pre>
+<hr />
+<h2 id="5-admin-dashboard-guide">5. Admin Dashboard Guide</h2>
+<h3 id="51-dashboard">5.1 Dashboard (/)</h3>
+<p>แสดง real-time statistics:
+- <strong>Total Jobs</strong> — จำนวน job ทั้งหมด
+- <strong>Completed / Pending / Processing / Failed</strong> — แยกตามสถานะ
+- <strong>Avg Time</strong> — เวลาเฉลี่ยต่อ job + ชื่อ model
+- <strong>Total Tokens</strong> — จำนวน Token ทั้งหมดที่ใช้ไป (Prompt + Response)
+- <strong>Avg Tokens</strong> — ค่าเฉลี่ย Token ต่อ 1 Job</p>
+<h3 id="52-dashboard-interpretation">5.2 Dashboard Interpretation</h3>
+<p>การอ่านค่าสถิติต่างๆ บน Dashboard เพื่อประเมินสุขภาพของระบบ:
+- <strong>Total Tokens:</strong> บอกถึงปริมาณการใช้งาน AI ยิ่งเยอะหมายถึงมีการวิเคราะห์ข้อมูลปริมาณมาก
+- <strong>Failed Jobs:</strong> หากมีค่าสูงเกิน 5% ควรตรวจสอบ Logs ของ <code>soc-worker</code> หรือเช็คการเชื่อมต่อ Ollama
+- <strong>Avg Time:</strong> หากค่าเฉลี่ยสูงกว่า 90s ในโหมด CPU แสดงว่าเครื่องอาจมีโหลดหนัก หรือ AI Model มีขนาดใหญ่เกินไปสำหรับทรัพยากรที่มี</p>
+<h3 id="53-analysis-jobs-jobs">5.3 Analysis Jobs (/jobs)</h3>
+<ul>
+<li>ดู job ทั้งหมดพร้อม status</li>
+<li>คอลัมน์ <strong>Tokens</strong> แสดงผลรวม Token ของรายการนั้นๆ</li>
+<li>กรอง: All / pending / processing / completed / failed</li>
+<li>คลิก Job ID → ดู detail</li>
+</ul>
+<h3 id="53-job-detail-jobsid">5.3 Job Detail (/jobs/:id)</h3>
+<ul>
+<li><strong>AI Response</strong> — ผล analysis จาก Ollama</li>
+<li><strong>Raw Log</strong> — log ดิบที่ SOAR ส่งมา</li>
+<li><strong>SOAR Prompt</strong> — instruction จาก SOAR Playbook</li>
+<li><strong>Tokens (Prompt/Response)</strong> — จำนวน token ที่ใช้ในแต่ละส่วนของ Job นั้นๆ</li>
+<li>Auto-refresh ทุก 5 วินาที ถ้า job ยัง pending/processing</li>
+</ul>
+<h3 id="54-api-keys-api-keys">5.4 API Keys (/api-keys)</h3>
+<ul>
+<li>สร้าง API Key สำหรับ SOAR</li>
+<li>ตั้งวันหมดอายุ (optional)</li>
+<li>Copy key (แสดงครั้งเดียว)</li>
+<li>Revoke key ที่ไม่ใช้แล้ว</li>
+</ul>
+<h3 id="55-users-users-admin-only">5.5 Users (/users) — Admin only</h3>
+<ul>
+<li>สร้าง/แก้ไข user</li>
+<li>กำหนด Role: <code>admin</code> / <code>analyst</code> / <code>readonly</code></li>
+<li>Enable/Disable user</li>
+</ul>
+<h3 id="56-audit-logs-audit-admin-only">5.6 Audit Logs (/audit) — Admin only</h3>
+<p>ระบบบันทึกประวัติการใช้งานทุกขั้นตอนเพื่อใช้ในการตรวจสอบย้อนหลัง (Forensics)</p>
+<table>
+<thead>
+<tr>
+<th>Event Type</th>
+<th>ความหมาย</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AUTH_LOGIN</code></td>
+<td>เข้าสู่ระบบสำเร็จ</td>
+</tr>
+<tr>
+<td><code>AUTH_FAILED</code></td>
+<td>Login ไม่สำเร็จ (รหัสผ่านผิด)</td>
+</tr>
+<tr>
+<td><code>AUTH_KEY_FAILED</code></td>
+<td>การยิง API ด้วย Key ที่ผิด/หมดอายุ</td>
+</tr>
+<tr>
+<td><code>USER_CREATED</code></td>
+<td>สร้าง User ใหม่</td>
+</tr>
+<tr>
+<td><code>USER_UPDATED</code></td>
+<td>แก้ไขข้อมูล User / เปลี่ยนรหัสผ่าน</td>
+</tr>
+<tr>
+<td><code>USER_DELETED</code></td>
+<td>ลบ User ออกจากระบบ</td>
+</tr>
+<tr>
+<td><code>KEY_CREATED</code></td>
+<td>สร้าง API Key ใหม่</td>
+</tr>
+<tr>
+<td><code>KEY_REVOKED</code></td>
+<td>ยกเลิกการใช้งาน API Key</td>
+</tr>
+<tr>
+<td><code>ANALYZE_REQUEST</code></td>
+<td>รับ Alert และกำลังเตรียมส่งให้ AI</td>
+</tr>
+<tr>
+<td><code>JOB_QUEUED</code></td>
+<td>งานถูกส่งเข้าคิวรอดำเนินการ</td>
+</tr>
+<tr>
+<td><code>JOB_PROCESSING</code></td>
+<td>Worker กำลังส่งให้ AI (Ollama) ประมวลผล</td>
+</tr>
+<tr>
+<td><code>JOB_COMPLETED</code></td>
+<td>AI วิเคราะห์เสร็จสิ้น</td>
+</tr>
+<tr>
+<td><code>JOB_FAILED</code></td>
+<td>AI วิเคราะห์ล้มเหลว</td>
+</tr>
+<tr>
+<td><code>SYSTEM_CLEANUP</code></td>
+<td>การล้างข้อมูลเก่าอัตโนมัติ (Retention)</td>
+</tr>
+<tr>
+<td><code>AUDIT_EXPORTED</code></td>
+<td>การสั่ง Export Audit Log ออกเป็น CSV</td>
+</tr>
+</tbody>
+</table>
+<h3 id="57-user-experience-features">5.7 User Experience Features</h3>
+<ul>
+<li><strong>Classic Pagination:</strong> ทุกหน้าตารางมีระบบแบ่งหน้าแบบคลาสสิก พร้อม Dropdown เลือกจำนวนแถว (10, 20, 50, 100)</li>
+<li><strong>Confirm Modals:</strong> การลบข้อมูลสำคัญ (User, API Key) จะมีหน้าต่างยืนยันสไตล์ Cyber Dark Theme พร้อมแสดง Error ทันทีหากลบไม่สำเร็จ</li>
+<li><strong>Data Retention:</strong> ระบบจะล้างข้อมูลเก่าอัตโนมัติตามระยะเวลาที่กำหนดใน <code>.env</code> เพื่อรักษาพื้นที่ฐานข้อมูล<ul>
+<li><code>RETENTION_DAYS_JOBS</code>: เก็บข้อมูลวิเคราะห์ไว้ (Default: 30 วัน)</li>
+<li><code>RETENTION_DAYS_AUDIT</code>: เก็บประวัติการใช้งานไว้ (Default: 90 วัน)</li>
+<li>ระบบจะเริ่มล้างข้อมูลตามเวลา <code>CLEANUP_HOUR</code> และ <code>CLEANUP_MINUTE</code> ที่ตั้งไว้ (Default: 02:00)</li>
+</ul>
+</li>
+<li><strong>Error Handling:</strong> เมื่อเกิด Error ในระบบ (เช่น AI ล่ม) ระบบจะแสดง Modal แจ้งเตือนสีแดงพร้อมรายละเอียด Error ให้ Admin ทราบทันที</li>
+</ul>
+<h3 id="58-api-response-codes-for-soar">5.8 API Response Codes (for SOAR)</h3>
+<table>
+<thead>
+<tr>
+<th>Code</th>
+<th>Meaning</th>
+<th>Action for SOAR</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>201</strong></td>
+<td>Created</td>
+<td>Job ถูกเข้าคิวแล้ว นำ <code>job_id</code> ไป Polling ต่อ</td>
+</tr>
+<tr>
+<td><strong>401</strong></td>
+<td>Unauthorized</td>
+<td>API Key ผิด หมดอายุ หรือไม่ได้ส่งมา</td>
+</tr>
+<tr>
+<td><strong>403</strong></td>
+<td>Forbidden</td>
+<td>API Key ไม่มีสิทธิ์เข้าถึง Endpoint นี้</td>
+</tr>
+<tr>
+<td><strong>422</strong></td>
+<td>Validation Error</td>
+<td>Payload ผิด Format หรือ Email ไม่ถูกต้อง</td>
+</tr>
+<tr>
+<td><strong>500</strong></td>
+<td>Internal Error</td>
+<td>ระบบหลังบ้านมีปัญหา (เช่น DB ล่ม)</td>
+</tr>
+<tr>
+<td><strong>502</strong></td>
+<td>Bad Gateway</td>
+<td>Backend ล่ม หรือ Nginx หา Backend ไม่เจอ</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="6-api-endpoint-reference">6. API Endpoint Reference</h2>
+<h3 id="auth">Auth</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Auth</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>POST</td>
+<td><code>/auth/login</code></td>
+<td>—</td>
+<td>Login → JWT tokens</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/auth/refresh</code></td>
+<td>JWT</td>
+<td>Refresh access token</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/auth/me</code></td>
+<td>JWT</td>
+<td>ดูข้อมูล user ปัจจุบัน</td>
+</tr>
+</tbody>
+</table>
+<h3 id="analysis-api-key">Analysis (ใช้ API Key)</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>POST</td>
+<td><code>/v1/analyze</code></td>
+<td>ส่ง alert เข้าคิว</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/v1/results</code></td>
+<td>List all jobs (JWT)</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/v1/results/{job_id}</code></td>
+<td>ดึงผลลัพธ์ (API Key/JWT)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="admin-jwt-required">Admin (JWT required)</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Role</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/admin/users</code></td>
+<td>admin</td>
+<td>List users</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/admin/users</code></td>
+<td>admin</td>
+<td>สร้าง user</td>
+</tr>
+<tr>
+<td>PUT</td>
+<td><code>/admin/users/{id}</code></td>
+<td>admin</td>
+<td>แก้ไข user</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/admin/api-keys</code></td>
+<td>admin/analyst</td>
+<td>List API keys</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/admin/api-keys</code></td>
+<td>admin/analyst</td>
+<td>สร้าง API key</td>
+</tr>
+<tr>
+<td>DELETE</td>
+<td><code>/admin/api-keys/{id}</code></td>
+<td>admin/analyst</td>
+<td>Revoke key</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/admin/audit-logs</code></td>
+<td>admin</td>
+<td>ดู audit trail</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/admin/audit-logs/export</code></td>
+<td>admin</td>
+<td>Export CSV</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/admin/stats</code></td>
+<td>admin/analyst/readonly</td>
+<td>Dashboard stats</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="7-environment-variables-reference">7. Environment Variables Reference</h2>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>คำอธิบาย</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POSTGRES_DB</code></td>
+<td><code>socai</code></td>
+<td>ชื่อ database</td>
+</tr>
+<tr>
+<td><code>POSTGRES_USER</code></td>
+<td><code>socai</code></td>
+<td>DB username</td>
+</tr>
+<tr>
+<td><code>POSTGRES_PASSWORD</code></td>
+<td>—</td>
+<td><strong>ต้องเปลี่ยน</strong></td>
+</tr>
+<tr>
+<td><code>DATABASE_URL</code></td>
+<td>—</td>
+<td>Full connection string</td>
+</tr>
+<tr>
+<td><code>REDIS_HOST</code></td>
+<td><code>soc-redis</code></td>
+<td>Redis hostname</td>
+</tr>
+<tr>
+<td><code>REDIS_PORT</code></td>
+<td><code>6379</code></td>
+<td>Redis port</td>
+</tr>
+<tr>
+<td><code>REDIS_DB</code></td>
+<td><code>0</code></td>
+<td>Redis database index</td>
+</tr>
+<tr>
+<td><code>OLLAMA_BASE_URL</code></td>
+<td><code>http://soc-ollama:11434</code></td>
+<td>Ollama endpoint</td>
+</tr>
+<tr>
+<td><code>OLLAMA_MODEL</code></td>
+<td><code>qwen2.5:7b</code></td>
+<td>AI model ที่ใช้</td>
+</tr>
+<tr>
+<td><code>OLLAMA_TIMEOUT</code></td>
+<td><code>120</code></td>
+<td>Max seconds รอ Ollama</td>
+</tr>
+<tr>
+<td><code>JWT_SECRET_KEY</code></td>
+<td>—</td>
+<td><strong>ต้องเปลี่ยน</strong> (≥32 chars)</td>
+</tr>
+<tr>
+<td><code>JWT_ACCESS_EXPIRE_MINUTES</code></td>
+<td><code>15</code></td>
+<td>Access token TTL</td>
+</tr>
+<tr>
+<td><code>JWT_REFRESH_EXPIRE_DAYS</code></td>
+<td><code>7</code></td>
+<td>Refresh token TTL</td>
+</tr>
+<tr>
+<td><code>DEFAULT_ADMIN_USERNAME</code></td>
+<td><code>admin</code></td>
+<td>Admin username เริ่มต้น</td>
+</tr>
+<tr>
+<td><code>DEFAULT_ADMIN_PASSWORD</code></td>
+<td><code>Admin@1234!</code></td>
+<td><strong>เปลี่ยนหลัง deploy</strong></td>
+</tr>
+<tr>
+<td><code>RETENTION_DAYS_JOBS</code></td>
+<td><code>30</code></td>
+<td>จำนวนวันที่เก็บ Analysis Jobs</td>
+</tr>
+<tr>
+<td><code>RETENTION_DAYS_AUDIT</code></td>
+<td><code>90</code></td>
+<td>จำนวนวันที่เก็บ Audit Logs</td>
+</tr>
+<tr>
+<td><code>CLEANUP_HOUR</code></td>
+<td><code>2</code></td>
+<td>ชั่วโมงที่จะเริ่มล้างข้อมูล (0-23)</td>
+</tr>
+<tr>
+<td><code>CLEANUP_MINUTE</code></td>
+<td><code>0</code></td>
+<td>นาทีที่จะเริ่มล้างข้อมูล (0-59)</td>
+</tr>
+<tr>
+<td><code>ALLOWED_ORIGINS</code></td>
+<td><code>http://localhost:3000</code></td>
+<td>CORS origins</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="8-role-permission-matrix">8. Role &amp; Permission Matrix</h2>
+<blockquote>
+<p><strong>คำจำกัดความของ Roles:</strong>
+- <strong>admin:</strong> สิทธิ์สูงสุด จัดการระบบ User, API Key, และดู Audit Logs ได้ทั้งหมด
+- <strong>analyst:</strong> สิทธิ์ระดับปฏิบัติการ สร้าง API Key สำหรับ Automation ได้ และดู Jobs ทั้งหมดเพื่อวิเคราะห์ผล
+- <strong>readonly:</strong> สิทธิ์สำหรับ Auditor หรือผู้บริหาร เข้ามาดู Jobs ทั้งหมดและดู Dashboard ได้ แต่ไม่สามารถตั้งค่าระบบหรือออก API Key ได้</p>
+</blockquote>
+<table>
+<thead>
+<tr>
+<th>Permission</th>
+<th style="text-align: center;">admin</th>
+<th style="text-align: center;">analyst</th>
+<th style="text-align: center;">readonly</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Login to Admin UI</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+</tr>
+<tr>
+<td>ส่ง analyze request (ใช้ API Key)</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">❌</td>
+</tr>
+<tr>
+<td>ดู jobs ทั้งหมด และ Dashboard</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+</tr>
+<tr>
+<td>สร้าง API Key (ของตัวเอง)</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">❌</td>
+</tr>
+<tr>
+<td>Revoke API Key ทั้งระบบ</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">❌</td>
+<td style="text-align: center;">❌</td>
+</tr>
+<tr>
+<td>เข้าถึงหน้า API Keys</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">❌</td>
+</tr>
+<tr>
+<td>จัดการ Users</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">❌</td>
+<td style="text-align: center;">❌</td>
+</tr>
+<tr>
+<td>ดู Audit Logs</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">❌</td>
+<td style="text-align: center;">❌</td>
+</tr>
+<tr>
+<td>Export Audit CSV</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">❌</td>
+<td style="text-align: center;">❌</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="9-troubleshooting">9. Troubleshooting</h2>
+<h3 id="91-frontend-build-error-npm-ci-failed">9.1 Frontend build error: <code>npm ci</code> failed</h3>
+<p><strong>Error:</strong> <code>The npm ci command can only install with an existing package-lock.json</code></p>
+<p><strong>Fix:</strong> เปลี่ยน <code>RUN npm ci</code> เป็น <code>RUN npm install</code> ใน <code>frontend/Dockerfile</code></p>
+<pre><code class="language-dockerfile"># แก้จาก
+RUN npm ci
+# เป็น
+RUN npm install
+</code></pre>
+<h3 id="92-backend-error-modulenotfounderror">9.2 Backend error: <code>ModuleNotFoundError</code></h3>
+<pre><code class="language-bash">docker compose logs soc-backend
+# ถ้าพบ import error ให้ rebuild
+docker compose up -d --build soc-backend soc-worker
+</code></pre>
+<h3 id="93-ollama-timeout-job-stuck-processing">9.3 Ollama timeout / Job stuck processing</h3>
+<p>Ollama CPU mode ช้า (~30-90 วินาที) เพิ่ม timeout:</p>
+<pre><code class="language-env"># .env
+OLLAMA_TIMEOUT=180
+</code></pre>
+<p>ตรวจสอบ Ollama:</p>
+<pre><code class="language-bash">docker compose logs soc-ollama
+# ตรวจสอบว่า model โหลดแล้ว
+docker compose exec soc-ollama ollama list
+</code></pre>
+<h3 id="94-database-connection-failed">9.4 Database connection failed</h3>
+<pre><code class="language-bash"># ตรวจสอบ DB health
+docker compose ps soc-db
+# ตรวจสอบ DATABASE_URL ใน .env
+# format: postgresql+asyncpg://USER:PASS@soc-db:5432/DB
+</code></pre>
+<h3 id="95-redis-connection-failed">9.5 Redis connection failed</h3>
+<pre><code class="language-bash">docker compose ps soc-redis
+docker compose exec soc-redis redis-cli ping
+# ควรได้ PONG
+</code></pre>
+<h3 id="96-worker-job">9.6 Worker ไม่รับ job</h3>
+<pre><code class="language-bash">docker compose logs soc-worker
+# restart worker
+docker compose restart soc-worker
+</code></pre>
+<h3 id="97-admin-ui-401-request">9.7 Admin UI แสดง 401 ทุก request</h3>
+<p>JWT หมดอายุ หรือ logout แล้ว login ใหม่ ถ้าเกิดบ่อยให้ตรวจสอบ <code>JWT_SECRET_KEY</code> ใน <code>.env</code></p>
+<h3 id="98-admin-ui-502-bad-gateway">9.8 Admin UI แสดง 502 Bad Gateway</h3>
+<p><strong>สาเหตุ:</strong> เกิดขึ้นบ่อยหลังจากมีการ Restart Backend ทำให้ IP ภายในของ Container เปลี่ยน แต่ Nginx ยังจำค่าเก่าอยู่</p>
+<p><strong>Fix:</strong> สั่ง Restart เฉพาะตัว Frontend เพื่อให้ Re-resolve DNS ใหม่:</p>
+<pre><code class="language-bash">docker compose restart soc-frontend
+</code></pre>
+<h3 id="99-code-ui">9.9 แก้ไข Code UI แล้วไม่เปลี่ยนตาม</h3>
+<p><strong>สาเหตุ:</strong> <code>soc-frontend</code> เป็น Production Build (Nginx) ไม่ได้ใช้ Volume Mount เหมือน Backend</p>
+<p><strong>Fix:</strong> ต้องสั่ง Rebuild เท่านั้น:</p>
+<pre><code class="language-bash">docker compose up -d --build soc-frontend
+</code></pre>
+<h3 id="910-422-unprocessable-entity-validation-error">9.10 422 Unprocessable Entity (Validation Error)</h3>
+<p><strong>สาเหตุ:</strong> มักเกิดจาก Schema ของข้อมูลไม่ตรงกัน เช่น ลืมส่ง Field ที่จำเป็น หรือ Format อีเมลไม่ผ่านเกณฑ์ (ปัจจุบันผ่อนปรนให้ใช้ <code>.local</code> ได้แล้ว)</p>
+<hr />
+<h2 id="10-development-guide">10. Development Guide</h2>
+<h3 id="101-project-structure">10.1 Project Structure</h3>
+<pre><code>e:\TI Script\SOC AI\
+├── docker-compose.yml
+├── .env.example
+├── .env                     ← gitignored
+├── README.md
+│
+├── backend/
+│   ├── main.py              ← FastAPI app entry
+│   ├── requirements.txt
+│   ├── Dockerfile
+│   ├── core/
+│   │   ├── config.py        ← Environment settings (Pydantic)
+│   │   ├── database.py      ← Async SQLAlchemy engine
+│   │   ├── security.py      ← JWT + bcrypt + API Key utils
+│   │   ├── deps.py          ← FastAPI dependencies
+│   │   └── audit.py         ← AuditLogger utility
+│   ├── models/
+│   │   ├── user.py          ← User, Role ORM
+│   │   ├── api_key.py       ← APIKey ORM
+│   │   ├── ai_job.py        ← AIJob ORM (+ JobStatus enum)
+│   │   └── audit_log.py     ← AuditLog ORM (+ EventType enum)
+│   ├── schemas/
+│   │   ├── auth.py          ← LoginRequest, TokenResponse
+│   │   ├── analysis.py      ← AnalyzeRequest, JobStatusResponse
+│   │   ├── admin.py         ← User/APIKey request/response
+│   │   └── audit.py         ← AuditLogResponse
+│   ├── routers/
+│   │   ├── auth.py          ← /auth/*
+│   │   ├── analysis.py      ← /v1/*
+│   │   └── admin.py         ← /admin/*
+│   ├── services/
+│   │   ├── auth_service.py  ← authenticate_user, issue_tokens
+│   │   └── ollama_service.py ← Ollama HTTP client + prompt builder
+│   ├── workers/
+│   │   ├── queue.py         ← ARQ WorkerSettings
+│   │   └── ai_worker.py     ← analyze_alert() job function
+│   └── scripts/
+│       └── init_db.py       ← Bootstrap roles + admin user
+│
+└── frontend/
+    ├── Dockerfile
+    ├── nginx.conf
+    ├── package.json
+    ├── vite.config.js
+    └── src/
+        ├── index.css        ← Dark theme design system
+        ├── App.jsx          ← Router setup
+        ├── main.jsx         ← React entry
+        ├── api/client.js    ← Axios + auto-refresh interceptor
+        ├── stores/authStore.js  ← Zustand auth state
+        ├── components/
+        │   ├── Layout.jsx       ← Sidebar + TopBar
+        │   ├── ProtectedRoute.jsx
+        │   └── StatusBadge.jsx
+        └── pages/
+            ├── Login.jsx
+            ├── Dashboard.jsx
+            ├── Jobs.jsx
+            ├── JobDetail.jsx
+            ├── ApiKeys.jsx
+            ├── Users.jsx
+            └── AuditLogs.jsx
+</code></pre>
+<h3 id="102-ai-model">10.2 เปลี่ยน AI Model</h3>
+<p>แก้ใน <code>.env</code>:</p>
+<pre><code class="language-env"># CPU Mode Options:
+OLLAMA_MODEL=qwen2.5:3b    # เร็วกว่า, RAM น้อยกว่า (~4GB)
+OLLAMA_MODEL=qwen2.5:7b    # Default — balance ดี (~10GB RAM)
+OLLAMA_MODEL=llama3.1:8b   # ทางเลือก, English ดี
+
+# ถ้ามี GPU (VRAM 16GB+)
+OLLAMA_MODEL=qwen2.5:14b   # แม่นยำกว่ามาก
+</code></pre>
+<p>Pull model ใหม่:</p>
+<pre><code class="language-bash">docker compose exec soc-ollama ollama pull qwen2.5:3b
+docker compose restart soc-worker
+</code></pre>
+<h3 id="103-api-endpoint">10.3 เพิ่ม API Endpoint ใหม่</h3>
+<ol>
+<li>สร้าง schema ใน <code>backend/schemas/</code></li>
+<li>เพิ่ม route ใน <code>backend/routers/</code> (หรือไฟล์ใหม่)</li>
+<li>Register router ใน <code>backend/main.py</code></li>
+<li>Rebuild: <code>docker compose up -d --build soc-backend</code></li>
+</ol>
+<h3 id="104-local-development-docker-backend">10.4 Local Development (ไม่ใช้ Docker สำหรับ backend)</h3>
+<pre><code class="language-bash"># เริ่ม infrastructure เท่านั้น
+docker compose up -d soc-db soc-redis soc-ollama
+
+# Backend (local)
+cd backend
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+
+# Worker (local, terminal แยก)
+python -m arq workers.queue.WorkerSettings
+
+# Frontend (local)
+cd frontend
+npm install
+npm run dev
+</code></pre>
+<blockquote>
+<p>แก้ <code>.env</code> ให้ชี้หา localhost:
+<code>env
+DATABASE_URL=postgresql+asyncpg://socai:pass@localhost:5432/socai
+REDIS_HOST=localhost
+OLLAMA_BASE_URL=http://localhost:11434</code></p>
+</blockquote>
+<h3 id="105-database-schema-changes">10.5 Database Schema Changes</h3>
+<p>ปัจจุบันใช้ <code>Base.metadata.create_all()</code> ที่ startup (สะดวกสำหรับ dev)</p>
+<p>สำหรับ production migration ให้ใช้ Alembic:</p>
+<pre><code class="language-bash"># Install
+pip install alembic
+
+# Init (ทำครั้งแรก)
+alembic init alembic
+
+# สร้าง migration
+alembic revision --autogenerate -m &quot;add_new_column&quot;
+
+# Apply
+alembic upgrade head
+</code></pre>
+<hr />
+<h2 id="11-security-checklist">11. Security Checklist</h2>
+<ul>
+<li>[ ] เปลี่ยน <code>POSTGRES_PASSWORD</code> จาก default</li>
+<li>[ ] เปลี่ยน <code>JWT_SECRET_KEY</code> เป็น random string ยาว ≥ 32 chars</li>
+<li>[ ] เปลี่ยน <code>DEFAULT_ADMIN_PASSWORD</code> หลัง deploy</li>
+<li>[ ] ปิด port 8000 จาก internet (ใช้ reverse proxy เช่น Nginx)</li>
+<li>[ ] ปิด port 5432, 6379, 11434 จาก internet</li>
+<li>[ ] ตั้ง <code>expires_days</code> บน API Key ทุกอัน</li>
+<li>[ ] Revoke API Key ที่ไม่ใช้แล้ว</li>
+<li>[ ] ตรวจสอบ Audit Log เป็นประจำ</li>
+</ul>
+<hr />
+<h2 id="11-production-deployment-hardening">11. Production Deployment &amp; Hardening</h2>
+<p>เพื่อให้ระบบมีความปลอดภัยสูงสุดเมื่อใช้งานจริง (Production) ควรปฏิบัติดังนี้:</p>
+<h3 id="111-httpsssl-setup">11.1 HTTPS/SSL Setup</h3>
+<p>ปัจจุบันระบบรันบน HTTP (Port 3000/8000) สำหรับ Production ควรใช้ Reverse Proxy (Nginx) มาครอบ:</p>
+<pre><code class="language-nginx"># ตัวอย่างการทำ SSL Termination
+server {
+    listen 443 ssl;
+    server_name soc-ai.yourdomain.com;
+    ssl_certificate /etc/letsencrypt/live/yourdomain/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/yourdomain/privkey.pem;
+
+    location / {
+        proxy_pass http://localhost:3000; # Frontend
+    }
+    location /v1 {
+        proxy_pass http://localhost:8000; # API
+    }
+}
+</code></pre>
+<h3 id="112-disabling-api-docs">11.2 Disabling API Docs</h3>
+<p>ใน Prod ควรปิดหน้า <code>/docs</code> และ <code>/redoc</code> เพื่อไม่ให้บุคคลภายนอกเห็นโครงสร้าง API:
+แก้ไขใน <code>.env</code>:</p>
+<pre><code class="language-env"># ในอนาคต (ถ้ามีการเพิ่มตัวแปรนี้ในโค้ด)
+SHOW_DOCS=false
+</code></pre>
+<h3 id="113-api-key-management">11.3 API Key Management</h3>
+<ul>
+<li>อย่าส่ง API Key ผ่านช่องทางที่ไม่ปลอดภัย (เช่น Chat/Email ที่ไม่เข้ารหัส)</li>
+<li>ควรมีนโยบาย <strong>Rotate API Key</strong> ทุกๆ 90 วัน</li>
+<li>หากพบว่า Key หลุด ให้ใช้เมนู <strong>Revoke</strong> ในหน้า API Keys ทันที</li>
+</ul>
+<hr />
+<h2 id="12-maintenance-monitoring">12. Maintenance &amp; Monitoring</h2>
+<h3 id="121-database-backup-postgresql">12.1 Database Backup (PostgreSQL)</h3>
+<p>ควรสำรองข้อมูลสม่ำเสมอด้วยคำสั่ง <code>pg_dump</code>:</p>
+<pre><code class="language-bash"># สำรองข้อมูล (Backup)
+docker exec soc-db pg_dump -U socai socai &gt; backup_$(date +%F).sql
+
+# กู้คืนข้อมูล (Restore)
+cat backup.sql | docker exec -i soc-db psql -U socai -d socai
+</code></pre>
+<h3 id="122-container-health-monitoring">12.2 Container Health Monitoring</h3>
+<p>ตรวจสอบสถานะทรัพยากรที่ Container ใช้งาน:</p>
+<pre><code class="language-bash">docker stats
+</code></pre>
+<blockquote>
+<p>⚠️ หาก <code>soc-ollama</code> ใช้ RAM เกิน 90% ของเครื่อง อาจส่งผลให้ระบบค้าง ควรพิจารณาจำกัดทรัพยากรใน <code>docker-compose.yml</code></p>
+</blockquote>
+<h3 id="123-updating-ai-models">12.3 Updating AI Models</h3>
+<p>เมื่อมีโมเดลใหม่ หรือต้องการเปลี่ยนเวอร์ชัน:</p>
+<pre><code class="language-bash">docker compose exec soc-ollama ollama pull qwen2.5:7b-instruct
+# แก้ไข OLLAMA_MODEL ใน .env แล้ว Restart worker
+docker compose restart soc-worker
+</code></pre>
+<hr />
+<h2 id="13-disaster-recovery">13. Disaster Recovery</h2>
+<h3 id="131-resetting-admin-password">13.1 Resetting Admin Password</h3>
+<p>หากลืมรหัสผ่าน Admin และเข้าหน้าเว็บไม่ได้:</p>
+<pre><code class="language-bash">docker compose exec soc-backend python -c &quot;from services.auth_service import get_password_hash; print(get_password_hash('NewPassword123!'))&quot;
+# จากนั้นเอา Hash ที่ได้ไป Update ใน DB ตาราง users ด้วย SQL
+</code></pre>
+<h3 id="132-system-re-initialization">13.2 System Re-initialization</h3>
+<p>กรณีระบบล่มหนักและต้องการล้างทั้งหมด (ข้อมูลจะหายหมด):</p>
+<pre><code class="language-bash">docker compose down -v
+docker compose up -d
+docker compose exec soc-backend python scripts/init_db.py
+</code></pre>
+<hr />
+<h2 id="14-performance-notes-updated">14. Performance Notes (Updated)</h2>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Estimated Time</th>
+<th>Memory (RAM)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CPU, qwen2.5:7b, Normal Log</td>
+<td>30–60s</td>
+<td>~8GB</td>
+</tr>
+<tr>
+<td>CPU, qwen2.5:7b, Heavy Load</td>
+<td>90s+</td>
+<td>~12GB</td>
+</tr>
+<tr>
+<td>GPU (RTX 3060), qwen2.5:7b</td>
+<td>3–10s</td>
+<td>~6GB VRAM</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="15-changelog-known-fixes">15. Changelog &amp; Known Fixes</h2>
+<h3 id="v135-2026-05-14">v1.3.5 (2026-05-14)</h3>
+<h4 id="bug-fix-8-backend-worker-crash-loop">Bug Fix 8 — Backend &amp; Worker Crash Loop</h4>
+<ul>
+<li><strong>ปัญหา:</strong> พบ <code>ImportError: SessionLocal</code> และ <code>AttributeError: CLEANUP_HOUR</code> เนื่องจาก Code บางส่วนเรียกใช้ตัวแปรที่ไม่มีใน Config หรือถูกเปลี่ยนชื่อเป็น Async</li>
+<li><strong>แก้ไข:</strong> ปรับปรุง <code>ai_worker.py</code> และ <code>config.py</code> ให้รองรับระบบ Async และ Maintenance ครบถ้วน</li>
+<li><strong>ไฟล์ที่เปลี่ยน:</strong> <code>backend/workers/ai_worker.py</code>, <code>backend/core/config.py</code></li>
+</ul>
+<h4 id="bug-fix-9-arq-cron-jobs">Bug Fix 9 — Arq Cron Jobs ไม่ทำงาน</h4>
+<ul>
+<li><strong>ปัญหา:</strong> การประกาศ <code>cron_jobs</code> ใน <code>queue.py</code> ใช้ Format ผิด ทำให้ ARQ แจ้ง <code>RuntimeError: must be instances of CronJob</code></li>
+<li><strong>แก้ไข:</strong> เปลี่ยนมาใช้ <code>arq.cron()</code> Wrapper ให้ถูกต้องตามมาตรฐาน</li>
+<li><strong>ไฟล์ที่เปลี่ยน:</strong> <code>backend/workers/queue.py</code></li>
+</ul>
+<h4 id="bug-fix-10-audit-export-500-error">Bug Fix 10 — Audit Export 500 Error</h4>
+<ul>
+<li><strong>ปัญหา:</strong> Postgres <code>eventtype</code> ขาดค่า <code>AUDIT_EXPORTED</code> และ <code>SYSTEM_CLEANUP</code> ทำให้เวลาบันทึก Log แล้วระบบล่ม</li>
+<li><strong>แก้ไข:</strong> เพิ่มค่าใน Enum ของทั้ง Database และ Python Model</li>
+<li><strong>ไฟล์ที่เปลี่ยน:</strong> <code>backend/models/audit_log.py</code></li>
+</ul>
+<h4 id="bug-fix-11-react-crash-on-validation-error">Bug Fix 11 — React Crash on Validation Error</h4>
+<ul>
+<li><strong>ปัญหา:</strong> เมื่อ API ตอบกลับ 422 (Array of Errors) Frontend พยายาม Render Object ลงใน UI ทำให้เกิด React Error #31</li>
+<li><strong>แก้ไข:</strong> เพิ่ม Logic ในการเช็คประเภทข้อมูล Error และแปลงเป็น String ก่อนแสดงผล</li>
+<li><strong>ไฟล์ที่เปลี่ยน:</strong> <code>frontend/src/pages/Users.jsx</code>, <code>frontend/src/pages/ApiKeys.jsx</code></li>
+</ul>
+<h3 id="v134-2026-05-14">v1.3.4 (2026-05-14)</h3>
+<h4 id="bug-fix-7-readonly-rbac-realignment">Bug Fix 7 — ปรับปรุงสิทธิ์ Readonly (RBAC Realignment)</h4>
+<ul>
+<li><strong>ปัญหา:</strong> ผู้ใช้ที่ระดับ <code>readonly</code> เข้าหน้า Dashboard แล้วโหลดสถิติไม่ได้ (หน้าจอว่างเปล่า) และมีข้อขัดแย้งเชิงตรรกะในคู่มือที่บอกว่า <code>readonly</code> ดูได้เฉพาะ Job ตัวเอง (ซึ่งเป็นไปไม่ได้เพราะสร้าง API Key ไม่ได้)</li>
+<li><strong>แก้ไข (Backend):</strong> ปลดล็อก API <code>GET /admin/stats</code> ให้ <code>readonly</code> สามารถเข้าถึงได้ เพื่อให้หน้า Dashboard แสดงข้อมูลสถิติของระบบได้</li>
+<li><strong>แก้ไข (คู่มือ):</strong> ปรับปรุงตาราง Role &amp; Permission Matrix ให้ถูกต้องตามความเป็นจริง ว่าในระบบ SOC นี้ <code>readonly</code> สามารถมองเห็นภาพรวมของ Jobs ทั้งระบบได้เสมือน Analyst แต่แก้ไขหรือตั้งค่าไม่ได้</li>
+<li><strong>ไฟล์ที่เปลี่ยน:</strong> <code>backend/routers/admin.py</code>, <code>SOC_AI_Manual.md</code></li>
+</ul>
+<h3 id="v133-2026-05-14">v1.3.3 (2026-05-14)</h3>
+<h4 id="bug-fix-4-audit-log-export-browser-alert-dark-theme">Bug Fix 4 — Audit Log Export ใช้ Browser <code>alert()</code> ที่ขัดกับ Dark Theme</h4>
+<ul>
+<li><strong>ปัญหา:</strong> ฟังก์ชัน Export CSV ในหน้า Audit Trail ใช้ <code>alert()</code> ของ Browser ซึ่งหน้าตาล้าสมัย ขัดกับ Dark Theme และบล็อก JavaScript Thread</li>
+<li><strong>แก้ไข:</strong> เปลี่ยนเป็น <strong>SweetAlert2 Popup</strong> ธีม Dark ที่เข้ากับ UI ของระบบ</li>
+<li><strong>ไฟล์ที่เปลี่ยน:</strong> <code>frontend/src/pages/AuditLogs.jsx</code></li>
+</ul>
+<h4 id="bug-fix-5-apikeys-key-silent">Bug Fix 5 — ApiKeys สร้าง Key ล้มเหลวแบบ Silent (ไม่มีการแจ้งเตือน)</h4>
+<ul>
+<li><strong>ปัญหา:</strong> ฟังก์ชัน <code>create</code> ใน API Keys ไม่มี <code>catch</code> block ทำให้หาก API ล้มเหลว (เช่น ชื่อ Key ซ้ำ, Network Error) ผู้ใช้จะไม่ได้รับแจ้งเตือนใดๆ เลย (Silent Failure)</li>
+<li><strong>แก้ไข:</strong> เพิ่ม <code>catch</code> block พร้อม <strong>SweetAlert2 Error Popup</strong> แสดงสาเหตุที่ชัดเจน</li>
+<li><strong>ไฟล์ที่เปลี่ยน:</strong> <code>frontend/src/pages/ApiKeys.jsx</code></li>
+</ul>
+<h4 id="bug-fix-6-readonly-role-api-keys">Bug Fix 6 — readonly Role เห็นและเข้าถึงหน้า API Keys ได้ (ไม่ควรเห็น)</h4>
+<ul>
+<li><strong>ปัญหา:</strong> เมนู "API Keys" ใน Sidebar แสดงให้ผู้ใช้ทุก Role เห็น รวมถึง <code>readonly</code> ซึ่งไม่มีสิทธิ์สร้างหรือ Revoke Key แม้ Backend จะ Reject แต่ Frontend ยังแสดงปุ่มและเมนูให้ ทำให้ UX สับสน</li>
+<li><strong>แก้ไข (Layout.jsx):</strong> แยก <code>ANALYST_NAV</code> ออกจาก <code>NAV</code> และใช้ <code>isAnalystOrAbove</code> เพื่อแสดงเมนู "API Keys" เฉพาะ <code>admin</code> และ <code>analyst</code> เท่านั้น</li>
+<li><strong>แก้ไข (ApiKeys.jsx):</strong> เพิ่มการตรวจสอบ <code>canManageKeys</code> เพื่อซ่อนปุ่ม "+ Create Key" และปุ่ม "Revoke" จาก <code>readonly</code> ในกรณีที่เข้าถึง URL โดยตรง</li>
+<li><strong>ไฟล์ที่เปลี่ยน:</strong> <code>frontend/src/components/Layout.jsx</code>, <code>frontend/src/pages/ApiKeys.jsx</code></li>
+</ul>
+<h3 id="v132-2026-05-14">v1.3.2 (2026-05-14)</h3>
+<h4 id="bug-fix-1-login-error-disappears-too-quickly">Bug Fix 1 — Login Error Disappears Too Quickly</h4>
+<ul>
+<li><strong>ปัญหา:</strong> ข้อความ Error ที่หน้า Login (เช่น บัญชีถูก Disable) แสดงแล้วหายเร็วเกินไปก่อนที่ผู้ใช้จะอ่านได้</li>
+<li><strong>แก้ไข:</strong> เปลี่ยนมาใช้ <strong>SweetAlert2 Popup</strong> ซึ่งจะค้างรอให้ผู้ใช้กด <strong>OK</strong> ก่อนถึงจะปิด</li>
+<li><strong>ไฟล์ที่เปลี่ยน:</strong> <code>frontend/src/pages/Login.jsx</code>, <code>frontend/package.json</code></li>
+</ul>
+<h4 id="bug-fix-2-default-admin">Bug Fix 2 — Default Admin เปลี่ยนรหัสผ่านไม่ได้</h4>
+<ul>
+<li><strong>ปัญหา:</strong> User <code>admin</code> ที่สร้างมาจาก <code>init_db.py</code> มี email เป็น <code>admin@localhost</code> ซึ่งไม่ผ่าน Pydantic <code>EmailStr</code> Validation ทำให้ API <code>/admin/users/{id}</code> ตอบกลับ 422 ทุกครั้งที่พยายาม Save</li>
+<li><strong>แก้ไข:</strong></li>
+<li>เปลี่ยน <code>DEFAULT_ADMIN_EMAIL</code> ใน <code>config.py</code> เป็น <code>admin@soc.local</code> (สำหรับการติดตั้งใหม่)</li>
+<li>เปลี่ยน <code>UpdateUserRequest.email</code> จาก <code>Optional[EmailStr]</code> เป็น <code>Optional[str]</code> พร้อม Custom Validator ที่ยืดหยุ่นกว่า รองรับ Internal Address ได้</li>
+<li><strong>สำหรับระบบที่ติดตั้งแล้ว:</strong> แก้ Email ของ Admin เป็น <code>admin@soc.local</code> ผ่านหน้า Edit User แล้วกด Save ก่อน จากนั้นเปลี่ยนรหัสผ่านได้ตามปกติ</li>
+<li><strong>ไฟล์ที่เปลี่ยน:</strong> <code>backend/core/config.py</code>, <code>backend/schemas/admin.py</code></li>
+</ul>
+<h4 id="bug-fix-3-audit-trail-filter">Bug Fix 3 — Audit Trail Filter ไม่ครอบคลุม</h4>
+<ul>
+<li><strong>ปัญหา:</strong> หน้า Audit Logs กรองได้เฉพาะ Event Type และ Actor เท่านั้น</li>
+<li><strong>แก้ไข (Frontend):</strong></li>
+<li>เพิ่ม Filter: <strong>IP Address</strong>, <strong>Status Code</strong> (Dropdown), <strong>Date From</strong>, <strong>Date To</strong></li>
+<li>เพิ่มปุ่ม <strong>✕ Clear</strong> เพื่อล้าง Filter ทั้งหมดในคลิกเดียว</li>
+<li>เพิ่ม Event Types ใหม่ใน Dropdown: <code>AUTH_KEY_FAILED</code>, <code>USER_UPDATED</code>, <code>SYSTEM_CLEANUP</code>, <code>AUDIT_EXPORTED</code></li>
+<li><strong>แก้ไข (Backend):</strong> เพิ่ม Query Parameters ให้ <code>/admin/audit-logs</code> รองรับ <code>ip_address</code>, <code>status_code</code>, <code>date_from</code>, <code>date_to</code> พร้อม Filter Count ที่ถูกต้องสำหรับ Pagination</li>
+<li><strong>ไฟล์ที่เปลี่ยน:</strong> <code>frontend/src/pages/AuditLogs.jsx</code>, <code>backend/routers/admin.py</code></li>
+</ul>
+<h3 id="v131-2026-05-14">v1.3.1 (2026-05-14)</h3>
+<ul>
+<li>เพิ่มระบบ Audit Logging ครอบคลุมทุก Critical Action (<code>AUTH_KEY_FAILED</code>, <code>USER_UPDATED</code>, <code>SYSTEM_CLEANUP</code>, <code>AUDIT_EXPORTED</code>)</li>
+<li>แก้ไข <code>generate_html_manual.py</code> ให้ดึง Version จาก Markdown มาใส่ <code>&lt;title&gt;</code> ของ HTML โดยอัตโนมัติ</li>
+<li>เพิ่ม Log Rotation ให้ทุก Docker Service (10MB × 3 ไฟล์)</li>
+</ul>
+<h3 id="v130-2026-05-14">v1.3.0 (2026-05-14)</h3>
+<ul>
+<li>เพิ่มระบบ Data Retention อัตโนมัติ (ตั้งค่าผ่าน <code>.env</code>)</li>
+<li>เพิ่ม Healthchecks ให้ <code>soc-backend</code></li>
+<li>เพิ่ม Restart Policy (<code>unless-stopped</code>) ทุก Service</li>
+</ul>
+<hr />
+<p><strong>Status:</strong> Enterprise Ready | <strong>Maintained by:</strong> SOC AI Team</p>
+    </div>
+</body>
+</html>
