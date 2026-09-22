@@ -191,6 +191,44 @@ out beside this one. Each repo also runs alone with its own compose file.
 docker compose -f deploy/stack.yml up -d --build
 ```
 
+## Running the whole thing locally
+
+Check the five repos out side by side, then:
+
+```bash
+cd Backend
+./deploy/dev-setup.sh                            # writes .env in all four
+docker compose -f deploy/dev.yml up -d --build   # http://localhost:3000
+```
+
+`dev-setup.sh` generates the secrets and writes them into every repo that needs
+them. Three of those — the tokens the connectors check — have to be identical
+in more than one file, and they are the ones that break quietly: a mismatch is
+a 401 with nothing saying why. Generating them once and writing them everywhere
+is the point of the script.
+
+It refuses to overwrite an existing `.env`. Pass `--force` when you mean to.
+
+### What is not running, and why
+
+`deploy/dev.yml` leaves out the Splunk, ThreatQ and Confluence connectors. They
+refuse to start without real credentials, and that refusal is deliberate — one
+that started anyway would answer confidently about data it cannot reach.
+
+What works without them is most of the path: an alert arrives, its indicators
+are extracted, the agent writes a suggestion, and the searches it asks for sit
+on the job waiting for a button that has nothing to call yet.
+
+To add one, put its credentials in `MCP-Server/.env` and bring it up on the
+same network:
+
+```bash
+cd ../MCP-Server && docker compose up -d soc-mcp-splunk
+```
+
+`deploy/stack.yml` is the version with all of them, for a machine that has
+those platforms.
+
 ---
 
 ## Where this came from

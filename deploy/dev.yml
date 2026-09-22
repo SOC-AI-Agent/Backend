@@ -1,0 +1,121 @@
+# The stack you can run on a laptop.
+#
+#   ./deploy/dev-setup.sh                          once
+#   docker compose -f deploy/dev.yml up -d --build
+#
+# Expects the repos checked out side by side:
+#
+#   Backend/   <- you are here
+#   AI-Service/  Frontend/  LLM-Server/  MCP-Server/
+#
+# Set REPOS if they live elsewhere; every path goes through it.
+#
+# The three MCP connectors are not here. They refuse to start without real
+# Splunk, ThreatQ and Confluence credentials, and that refusal is the point —
+# one that started without them would answer confidently about data it cannot
+# reach. deploy/stack.yml is the version with everything, for a machine that
+# has those platforms.
+#
+# What works without them: an alert arrives, its indicators are extracted, the
+# agent writes a suggestion, and the searches it asks for wait on the job.
+
+services:
+  soc-db:
+    image: postgres:16-alpine
+    container_name: soc-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-socai}
+      POSTGRES_USER: ${POSTGRES_USER:-socai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run deploy/dev-setup.sh first}
+    volumes: [dev-postgres:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-socai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [soc-network]
+
+  soc-redis:
+    image: redis:7-alpine
+    container_name: soc-redis
+    volumes: [dev-redis:/data]
+    healthcheck: {test: ["CMD", "redis-cli", "ping"], interval: 5s, retries: 10}
+    networks: [soc-network]
+
+  soc-ollama:
+    image: ollama/ollama:latest
+    container_name: soc-ollama
+    environment:
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_KEEP_ALIVE=-1
+    volumes: [dev-ollama:/root/.ollama]
+    # Keep this below what Docker Desktop is given, or the model swaps and
+    # inference drops by two orders of magnitude — measured at 0.14 tok/s
+    # swapping against 12.93 with room to fit.
+    mem_limit: ${OLLAMA_MEM_LIMIT:-7g}
+    networks: [soc-network]
+
+  soc-llm-server:
+    build: ${REPOS:-..}/LLM-Server
+    container_name: soc-llm-server
+    ports: ["8400:8400"]
+    env_file: ["${REPOS:-..}/LLM-Server/.env"]
+    volumes:
+      - dev-agents:/data
+      - ${REPOS:-..}/LLM-Server/fixtures:/fixtures:ro
+    depends_on: [soc-ollama]
+    networks: [soc-network]
+
+  soc-ai:
+    build: ${REPOS:-..}/AI-Service
+    container_name: soc-ai
+    ports: ["8100:8100"]
+    env_file: ["${REPOS:-..}/AI-Service/.env"]
+    depends_on: [soc-llm-server]
+    networks: [soc-network]
+
+  soc-core-api:
+    build: ${REPOS:-..}/Backend
+    container_name: soc-core-api
+    command: node dist/main.js
+    environment: {APP_ROLE: api}
+    ports: ["8000:8000"]
+    env_file: ["${REPOS:-..}/Backend/.env"]
+    volumes: ["${REPOS:-..}/MCP-Server/Splunk/catalog:/catalog:ro"]
+    depends_on:
+      soc-db: {condition: service_healthy}
+      soc-redis: {condition: service_healthy}
+    networks: [soc-network]
+
+  soc-core-worker:
+    build: ${REPOS:-..}/Backend
+    container_name: soc-core-worker
+    command: node dist/main.js
+    environment: {APP_ROLE: worker}
+    env_file: ["${REPOS:-..}/Backend/.env"]
+    volumes: ["${REPOS:-..}/MCP-Server/Splunk/catalog:/catalog:ro"]
+    depends_on:
+      soc-db: {condition: service_healthy}
+      soc-redis: {condition: service_healthy}
+    networks: [soc-network]
+
+  soc-frontend:
+    build: ${REPOS:-..}/Frontend
+    container_name: soc-frontend
+    ports: ["3000:80"]
+    depends_on: [soc-core-api]
+    networks: [soc-network]
+
+volumes:
+  # Named dev-* so tearing the development stack down with `down -v` cannot
+  # reach a production volume that happens to share this machine.
+  dev-postgres:
+  dev-redis:
+  dev-ollama:
+  dev-agents:
+
+networks:
+  soc-network:
+    name: soc-network
+    driver: bridge
