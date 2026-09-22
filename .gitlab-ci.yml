@@ -1,0 +1,147 @@
+# Backend — build, then deploy on main.
+#
+# Adapted from the monorepo's pipeline, which was written when this was one
+# repo with a FastAPI backend. Four things changed and each one mattered:
+#
+#   python scripts/init_db.py  ->  prisma + a seed that refuses a blank password
+#   soc-backend / soc-worker   ->  soc-core-api / soc-core-worker
+#   postgresql+asyncpg://      ->  postgresql://          (Prisma, not SQLAlchemy)
+#   one .env for everything    ->  one per repo
+#
+# The last one needs saying out loud: the tokens the connectors check
+# (MCP_AUTH_TOKEN, THREATQ_MCP_AUTH_TOKEN, CONFLUENCE_MCP_AUTH_TOKEN) must be
+# byte-identical in this project and in MCP-Server. Set them as GROUP variables
+# on Agentic-AI-for-Enhancing-SOC, not per project — two projects holding their
+# own copy is two copies that drift, and the failure is a 401 with nothing
+# saying why.
+
+stages:
+  - build
+  - test
+  - deploy
+
+default:
+  tags:
+    - llm
+
+variables:
+  DOCKER_HOST: unix:///var/run/docker.sock
+  DOCKER_TLS_CERTDIR: ""
+
+# ── Reusable: write .env from CI variables ──────────────────────────────────
+#
+# Not sed. A password containing | or / breaks the expression, and one
+# containing & is silently replaced by the matched text — the pipeline goes
+# green and the service cannot log in. This reads the keys from .env.example
+# and takes any that exist in the environment, whatever characters they hold.
+#
+# The result is never an artifact and never printed. The monorepo's job did
+# both: `artifacts: paths: [.env]` put filled-in production credentials in
+# GitLab's artifact store for a week, downloadable by anyone with project
+# access, and `cat .env | grep -v PASSWORD | grep -v SECRET | grep -v URL`
+# printed everything else — including MCP_AUTH_TOKEN, SPLUNK_TOKEN,
+# THREATQ_TOKEN and CONFLUENCE_API_TOKEN, none of which contain those words.
+.write_env: &write_env |
+  set -eu
+  : > .env
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ''|'#'*) printf '%s\n' "$line" >> .env; continue ;;
+    esac
+    key=${line%%=*}
+    if [ "$key" = "$line" ]; then printf '%s\n' "$line" >> .env; continue; fi
+    if eval "[ \"\${${key}+set}\" = set ]"; then
+      eval "printf '%s=%s\n' \"\$key\" \"\$$key\"" >> .env
+    else
+      printf '%s\n' "$line" >> .env
+    fi
+  done < .env.example
+  echo "wrote .env — keys taken from CI variables:"
+  # Names only. The values are the point of the exercise.
+  while IFS= read -r line; do
+    key=${line%%=*}
+    case "$key" in ''|'#'*) continue ;; esac
+    if eval "[ \"\${${key}+set}\" = set ]"; then echo "  $key"; fi
+  done < .env.example
+
+build_image:
+  stage: build
+  image: docker:latest
+  script:
+    - docker build -t "soc-core:${CI_COMMIT_SHORT_SHA}" -t soc-core:latest .
+  rules:
+    - if: '$CI_COMMIT_BRANCH'
+
+code_test:
+  stage: test
+  image: node:20
+  script:
+    - npm ci
+    - npx prisma generate
+    # Type errors have reached main from this repo before. tsc is not a test
+    # suite, but it is the check that would have caught them.
+    - npx tsc --noEmit
+  rules:
+    - if: '$CI_COMMIT_BRANCH'
+
+deploy_production:
+  stage: deploy
+  image: docker:latest
+  environment:
+    name: production
+    # The address GitLab shows and links to. It is where the service actually
+    # answers, so it comes from a variable — localhost here would be a link to
+    # the runner, which is not where anyone reads this from.
+    url: ${BACKEND_URL}
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - *write_env
+
+    - echo "========== 1. Build and start =========="
+    - docker compose up -d --build --wait
+
+    - echo "========== 2. Database schema =========="
+    # `migrate deploy` applies committed migrations and refuses to invent any.
+    # There is no prisma/migrations/ in this repo yet — until there is, this
+    # step does nothing and the schema is whatever the last `db push` left.
+    #
+    # `db push` is deliberately NOT run here. It makes the database match the
+    # schema file, and on production that includes dropping a column the schema
+    # no longer mentions — without asking, and with the data in it.
+    - |
+      if [ -d prisma/migrations ]; then
+        docker compose exec -T soc-core-api npx prisma migrate deploy
+      else
+        echo "no prisma/migrations/ — skipping."
+        echo "Generate one before the next schema change:"
+        echo "  npx prisma migrate dev --name <what-changed>"
+        echo "and commit it. Without migrations there is no reviewed, repeatable"
+        echo "path from the current production schema to the next one."
+      fi
+
+    - echo "========== 3. Seed =========="
+    # Creates the admin only if there is none. It refuses to run without
+    # DEFAULT_ADMIN_PASSWORD rather than falling back to one in the source,
+    # and it does not echo the password.
+    - docker compose exec -T soc-core-api node dist/seed.js
+
+    - echo "========== 4. Restart the worker =========="
+    # The worker holds its config at boot. It is restarted after the schema
+    # and seed so it does not spend the first minutes of a deploy running
+    # against the old one.
+    - docker compose restart soc-core-worker
+
+    - echo "========== 5. Health =========="
+    # A deploy that finishes is not a deploy that works. Checked here so the
+    # pipeline goes red rather than green-and-broken.
+    - |
+      for i in $(seq 1 30); do
+        if docker compose exec -T soc-core-api curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
+          echo "healthy"; exit 0
+        fi
+        sleep 4
+      done
+      echo "the API did not become healthy within 2 minutes"
+      docker compose logs --tail 50 soc-core-api
+      exit 1
