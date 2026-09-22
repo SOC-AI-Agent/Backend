@@ -1,0 +1,31 @@
+meta {
+  name: Refresh token
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{core}}/auth/refresh
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "refresh_token": "{{refresh_token}}"
+  }
+}
+
+tests {
+  test("responds 2xx", function() {
+    expect(res.getStatus()).to.be.within(200, 300);
+  });
+}
+
+docs {
+  Run Login first so {{refresh_token}} is set.
+}

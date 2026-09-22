@@ -1,0 +1,21 @@
+meta {
+  name: Users - delete
+  type: http
+  seq: 11
+}
+
+delete {
+  url: {{core}}/admin/users/{{user_id}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{jwt}}
+}
+
+tests {
+  test("responds 2xx", function() {
+    expect(res.getStatus()).to.be.within(200, 300);
+  });
+}

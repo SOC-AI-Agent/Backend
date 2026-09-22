@@ -165,6 +165,31 @@ once the parent is clean on its own.
 
 ---
 
+## Tooling
+
+`scripts/derive_signatures.py` works out which fields identify a log family,
+from alerts that could not be placed — the input to `ALERT_SOURCE_SIGNATURES`.
+
+`samples/` holds alerts to post at the API: `alerts.json` is hand-written,
+`mockup.json` is recovered ES notables.
+
+`docs/` covers the whole stack: `setup.md` to bring it up, `tokens.md` for
+which credential each service needs, `testing.md` for what to check when an
+answer looks wrong, and `restructure.md` for why the architecture is shaped the
+way it is.
+
+`api-tests/` is a Bruno collection for this API — auth, admin, and the SOAR
+path. It carries the shared pre-request script that fetches a JWT and an API
+key, because this is the service that issues them.
+
+## Running all five repos together
+
+`deploy/stack.yml` brings up the whole SOC, expecting the other repos checked
+out beside this one. Each repo also runs alone with its own compose file.
+
+```bash
+docker compose -f deploy/stack.yml up -d --build
+```
 
 ---
 

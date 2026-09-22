@@ -1,0 +1,21 @@
+meta {
+  name: Users - list
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{core}}/admin/users
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{jwt}}
+}
+
+tests {
+  test("responds 2xx", function() {
+    expect(res.getStatus()).to.be.within(200, 300);
+  });
+}

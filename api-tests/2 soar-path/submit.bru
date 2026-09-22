@@ -1,0 +1,43 @@
+meta {
+  name: Submit an alert
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{core}}/v1/analyze
+  body: json
+  auth: none
+}
+
+headers {
+  X-API-Key: {{api_key}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "alert_id": "BRUNO-001",
+    "alert_name": "Outbound connection blocked",
+    "raw_log": "date=2026-09-21 time=07:20:31 devname=\"FGT-01\" srcip=10.1.100.11 dstip=45.83.122.9 dstport=8443 action=\"blocked\" service=\"HTTPS\" dstcountry=\"Russia\" user=\"jdoe\""
+  }
+}
+
+script:post-response {
+  bru.setVar("job_id", res.getBody().job_id);
+}
+
+tests {
+  test("202 accepted", function() { expect(res.getStatus()).to.equal(202); });
+  test("returns a job id", function() {
+    expect(res.getBody().job_id).to.be.a("string");
+  });
+}
+
+docs {
+  202 with a job id. The worker enriches, then runs the agent.
+
+  No instruction field: the agent on the LLM server holds its own system
+  prompt. A playbook that still sends "prompt" is not rejected — the field
+  is whitelisted away.
+}

@@ -1,0 +1,25 @@
+meta {
+  name: Job detail (dashboard)
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{core}}/v1/jobs/{{job_id}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{jwt}}
+}
+
+tests {
+  test("responds 2xx", function() {
+    expect(res.getStatus()).to.be.within(200, 300);
+  });
+}
+
+docs {
+  Carries `evidence` — the indicators extracted and what threat intelligence said, stored apart from the model's prose so the two can visibly disagree.
+}

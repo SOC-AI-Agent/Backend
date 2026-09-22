@@ -1,0 +1,27 @@
+meta {
+  name: Submit with a field missing (must fail)
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{core}}/v1/analyze
+  body: json
+  auth: none
+}
+
+headers {
+  X-API-Key: {{api_key}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "alert_id": "X",
+    "alert_name": "X"
+  }
+}
+
+tests {
+  test("400", function() { expect(res.getStatus()).to.equal(400); });
+}

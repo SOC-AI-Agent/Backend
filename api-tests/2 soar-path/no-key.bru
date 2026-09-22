@@ -1,0 +1,31 @@
+meta {
+  name: Submit without a key (must fail)
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{core}}/v1/analyze
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "alert_id": "X",
+    "alert_name": "X",
+    "raw_log": "X"
+  }
+}
+
+tests {
+  test("401", function() { expect(res.getStatus()).to.equal(401); });
+}
+
+docs {
+  The guard, checked rather than assumed.
+}

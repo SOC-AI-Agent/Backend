@@ -1,0 +1,41 @@
+meta {
+  name: Users - create
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{core}}/admin/users
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{jwt}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "username": "analyst1",
+    "email": "analyst1@example.com",
+    "password": "Ch4nge-me-please!",
+    "role": "analyst"
+  }
+}
+
+script:post-response {
+  if (res.getStatus() === 201) bru.setVar("user_id", res.getBody().id);
+}
+
+tests {
+  test("created or already exists", function() {
+    expect([201, 409]).to.include(res.getStatus());
+  });
+}
+
+docs {
+  409 on a second run, which is expected.
+  
+  The email needs a TLD: @IsEmail() rejects user@localhost, even though DEFAULT_ADMIN_EMAIL uses exactly that.
+}

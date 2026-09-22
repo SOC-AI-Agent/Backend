@@ -1,0 +1,21 @@
+meta {
+  name: API keys - list
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{core}}/admin/api-keys
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{jwt}}
+}
+
+tests {
+  test("responds 2xx", function() {
+    expect(res.getStatus()).to.be.within(200, 300);
+  });
+}
