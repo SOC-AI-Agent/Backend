@@ -8,7 +8,7 @@ audit trail and the alert-analysis job lifecycle.
 ```
 src/
   main.ts                  bootstrap; APP_ROLE=api serves HTTP, APP_ROLE=worker consumes the queue
-  seed.ts                  roles + bootstrap admin (replaces python scripts/init_db.py)
+  seed.ts                  roles only (replaces python scripts/init_db.py)
   app.module.ts
   config/configuration.ts  env -> typed config (same env names as the old FastAPI backend)
   prisma/                  PrismaService (global)
@@ -94,9 +94,30 @@ variant in `DATABASE_URL` is for the Python service only.
 ```bash
 docker compose up -d --build soc-core-api soc-core-worker
 docker compose exec soc-core-api npx prisma db push   # create/sync schema
-docker compose exec soc-core-api npm run seed          # roles + admin user
+docker compose exec soc-core-api npm run seed          # roles only
 docker compose logs -f soc-core-worker
 ```
+
+`prisma db push` is for a fresh local database only. The production schema must
+be inventoried before enabling automated Prisma migrations — this repository's
+schema is not proof of what production currently contains. Start with a
+read-only dump and compare it with `prisma/schema.prisma`:
+
+```bash
+pg_dump --schema-only --no-owner --no-privileges "$CORE_DATABASE_URL" \
+  > production-schema.sql
+```
+
+Do not run `prisma migrate resolve`, `prisma migrate deploy`, or `prisma db push`
+against production until the existing tables, enums, indexes, constraints, and
+the password hash column have been reviewed. Then create a baseline from the
+actual production schema and test it against a database clone.
+
+For a temporary VPN-only schema inspection, set `DB_SCHEMA_DEBUG=true` and call
+`GET /internal/db/schema` with an admin JWT. It returns public table/column
+metadata only and redacts password, secret, token, hash, and API-key columns.
+With the flag off the route answers 404. Set it back to `false` and redeploy
+after the inspection.
 
 Local, outside Docker:
 
@@ -169,9 +190,30 @@ once the parent is clean on its own.
 
 `scripts/derive_signatures.py` works out which fields identify a log family,
 from alerts that could not be placed — the input to `ALERT_SOURCE_SIGNATURES`.
+It trusts explicit source metadata first; a `search_name` prefix counts only
+with `--allow-search-name-prefix`, because alert names are not a production
+source of truth. Reviewed domains come from `--domains domains.json`. Groups
+under five alerts are printed as candidates but not emitted as rules unless
+`--min-group-size 0` is passed.
 
-`samples/` holds alerts to post at the API: `alerts.json` is hand-written,
-`mockup.json` is recovered ES notables.
+`samples/mockup.json` holds recovered ES notables to post at the API.
+
+## Tests
+
+`tests/` is a pytest suite for the running API. It replaces the hand-run
+`scripts/test_request.py`, `test_full_flow.py` and `test_bulk_analyze.py` with
+the same alerts and assertions.
+
+```bash
+pip install -r tests/requirements.txt
+SOC_API_KEY=<key> pytest                 # everything; submits real jobs
+SOC_API_KEY=<key> pytest -m "not e2e"    # request/auth/validation only, no waiting on the model
+pytest                                   # no key: only the 401 checks run, the rest skip
+```
+
+`SOC_BASE_URL` (default `http://localhost:8081`) points it elsewhere;
+`SOC_JOB_TIMEOUT` (default 300 s per job) is how long an `e2e` test waits for
+the model. Jobs it creates are named `PYTEST-…` and age out with the rest.
 
 `docs/` covers the whole stack: `setup.md` to bring it up, `tokens.md` for
 which credential each service needs, `testing.md` for what to check when an
@@ -198,7 +240,7 @@ Check the five repos out side by side, then:
 ```bash
 cd Backend
 ./deploy/dev-setup.sh                            # writes .env in all four
-docker compose -f deploy/dev.yml up -d --build   # http://localhost:3000
+docker compose -f deploy/dev.yml up -d --build   # http://localhost:3001
 ```
 
 `dev-setup.sh` generates the secrets and writes them into every repo that needs

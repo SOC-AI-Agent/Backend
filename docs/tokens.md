@@ -72,10 +72,9 @@ openssl rand -hex 16
 
 ### `DEFAULT_ADMIN_PASSWORD`
 
-รหัส admin ตอน seed ครั้งแรก
-
-> ⚠️ **`npm run seed` ไม่ทับ user ที่มีอยู่แล้ว** — เปลี่ยนค่านี้หลัง seed ครั้งแรกไม่มีผล
-> ถ้าลืมรหัส ต้องเปลี่ยนผ่านหน้า Users หรือล้าง DB แล้ว seed ใหม่
+**สงวนไว้ — ไม่มีอะไรอ่านค่านี้** เก็บไว้ใน `.env.example` ชั่วคราวเท่านั้น
+`npm run seed` สร้างแค่ roles ห้ามโค้ด, script หรือ CI ใช้ค่านี้สร้างหรือ login user
+admin คนแรกสร้างเองตาม [setup.md ข้อ 4](setup.md)
 
 ---
 
@@ -177,19 +176,19 @@ THREATQ_TOKEN=<token>
 
 ### ทาง Dashboard
 
-`http://localhost:3000` → login → **API Keys** → Create → คัดลอกค่า (แสดงครั้งเดียว)
+`http://localhost:3001` → login → **API Keys** → Create → คัดลอกค่า (แสดงครั้งเดียว)
 
 ### ทาง API
 
 ```bash
 # 1. login เอา JWT
-JWT=$(curl -s -X POST http://localhost:8000/auth/login \
+JWT=$(curl -s -X POST http://localhost:8081/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"<รหัส admin>"}' \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
 
 # 2. ออก API key
-curl -s -X POST http://localhost:8000/admin/api-keys \
+curl -s -X POST http://localhost:8081/admin/api-keys \
   -H "Authorization: Bearer $JWT" -H 'Content-Type: application/json' \
   -d '{"name":"fortisoar-prod"}'
 ```
@@ -223,7 +222,7 @@ echo "THREATQ_MCP_AUTH_TOKEN=$(openssl rand -hex 32)"
 | --- | --- |
 | `POSTGRES_PASSWORD` + ใน `CORE_DATABASE_URL` | สุ่ม |
 | `JWT_SECRET_KEY` | สุ่ม |
-| `DEFAULT_ADMIN_PASSWORD` | ตั้งเอง (เปลี่ยนทีหลังไม่ได้ ดูข้อ 1) |
+| `DEFAULT_ADMIN_PASSWORD` | สงวนไว้ ไม่ถูกอ่าน — ไม่ต้องตั้ง (ดูข้อ 1) |
 | `MCP_AUTH_TOKEN` | สุ่ม |
 | `THREATQ_MCP_AUTH_TOKEN` | สุ่ม |
 | `SPLUNK_TOKEN` + `SPLUNK_BASE_URL` + `SPLUNK_ALLOWED_INDEXES` | ข้อ 2 |
@@ -235,13 +234,15 @@ echo "THREATQ_MCP_AUTH_TOKEN=$(openssl rand -hex 32)"
 docker compose --profile ai up -d --build
 docker compose exec soc-ollama ollama pull qwen2.5:7b
 docker compose exec soc-core-api npx prisma db push
-docker compose exec soc-core-api npm run seed
+docker compose exec soc-core-api npm run seed          # roles only
 ```
+
+สร้าง admin คนแรกเอง: [setup.md ข้อ 4](setup.md)
 
 ตรวจว่าตั้งครบ:
 
 ```bash
-curl -s localhost:8000/health   # ai_service: "up"
+curl -s localhost:8081/health   # ai_service: "up"
 curl -s localhost:8100/health   # ollama: true
 curl -s localhost:8400/health   # agents, mcp_servers
 docker compose exec soc-mcp-splunk python -c \
@@ -259,13 +260,13 @@ RuntimeError: refusing to start, unset required env: MCP_AUTH_TOKEN, SPLUNK_TOKE
 
 ---
 
-## 6. Splunk สำหรับทดสอบ (ไม่มี Splunk จริง)
+## 6. Splunk สำหรับทดสอบ (เฉพาะเมื่อต่อ Splunk ของบริษัทไม่ได้)
 
 ```bash
 PW="Splunk@Test$(openssl rand -hex 3)"; echo "$PW"
 
 docker run -d --name soc-splunk \
-  --network soc-ai_soc-network --network-alias splunk \
+  --network soc-network --network-alias splunk \
   -e SPLUNK_GENERAL_TERMS=--accept-sgt-current-at-splunk-com \
   -e SPLUNK_START_ARGS=--accept-license \
   -e SPLUNK_PASSWORD="$PW" \
@@ -276,7 +277,7 @@ docker run -d --name soc-splunk \
 > ต้องใส่ทั้ง `SPLUNK_GENERAL_TERMS` และ `SPLUNK_START_ARGS` — **นี่คือการยอมรับ
 > Splunk General Terms** ขาดตัวใดตัวหนึ่ง container จะไม่ขึ้น
 >
-> web map ไปที่ `8001` เพราะ `8000` ถูก `soc-core-api` ใช้อยู่
+> web map ไปที่ `8001` เพื่อไม่ชนกับ port 8000 ของเครื่องที่อาจใช้อยู่
 >
 > บน Apple Silicon image เป็น amd64 ต้อง emulate — boot ครั้งแรกกินเวลาหลายนาที
 

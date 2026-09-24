@@ -108,7 +108,7 @@ connector ไม่ publish port ออกนอก จึงต้องยิ�
 export MCP_AUTH_TOKEN='<ค่าใน .env>'
 
 mcp() {
-  docker run --rm --network soc-ai_soc-network curlimages/curl -s -X POST \
+  docker run --rm --network soc-network curlimages/curl -s -X POST \
     http://soc-mcp-splunk:8200/mcp \
     -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
     -H 'Content-Type: application/json' \
@@ -327,7 +327,7 @@ Error executing tool alert_frequency: days must be between 1 and 90
 **auth** — token ผิดต้องไม่ผ่าน
 
 ```bash
-docker run --rm --network soc-ai_soc-network curlimages/curl -s -o /dev/null -w '%{http_code}\n' \
+docker run --rm --network soc-network curlimages/curl -s -o /dev/null -w '%{http_code}\n' \
   -X POST http://soc-mcp-splunk:8200/mcp \
   -H 'Authorization: Bearer wrong-token' \
   -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
@@ -375,7 +375,7 @@ curl -sk -u admin:"$PW" -X POST https://localhost:8089/services/search/jobs \
 
 ```bash
 docker compose ps
-curl -s localhost:8000/health    # core API  -> ai_service: up
+curl -s localhost:8081/health    # core API  -> ai_service: up
 curl -s localhost:8100/health    # ai-service -> llm_server: true
 curl -s localhost:8400/health    # llm-server -> ollama, agents, mcp_servers
 docker compose exec soc-mcp-splunk python -c \
