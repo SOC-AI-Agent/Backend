@@ -1,8 +1,9 @@
 import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiOkResponse, ApiOperation, ApiProduces, ApiTags } from '@nestjs/swagger';
 import { Prisma } from '@prisma/client';
 import { Response } from 'express';
 
+import { ApiRoleAuth } from '../../common/decorators/api-docs.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -10,6 +11,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { AuthUser } from '../../common/types/auth-user';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from './audit.service';
+import { AuditLogListResponse } from './dto/audit-log.response';
 import { ListAuditLogsQuery } from './dto/list-audit-logs.query';
 
 const CSV_COLUMNS = [
@@ -29,6 +31,7 @@ const CSV_COLUMNS = [
 @ApiTags('Admin')
 @Controller('admin/audit-logs')
 @UseGuards(JwtAuthGuard, RolesGuard)
+@ApiRoleAuth('admin')
 export class AuditController {
   constructor(
     private readonly prisma: PrismaService,
@@ -37,6 +40,8 @@ export class AuditController {
 
   @Get()
   @Roles('admin')
+  @ApiOperation({ summary: 'Search the audit log', description: 'Newest first. Every filter is optional.' })
+  @ApiOkResponse({ type: AuditLogListResponse })
   async list(@Query() query: ListAuditLogsQuery) {
     const where = this.buildWhere(query);
     const [total, items] = await this.prisma.$transaction([
@@ -72,6 +77,9 @@ export class AuditController {
 
   @Get('export')
   @Roles('admin')
+  @ApiOperation({ summary: 'Export the audit log as CSV', description: 'The newest 10,000 entries, without the prompt and response snapshots. The export is itself audited.' })
+  @ApiProduces('text/csv')
+  @ApiOkResponse({ description: 'A CSV file.', schema: { type: 'string', format: 'binary' } })
   async export(@CurrentUser() user: AuthUser, @Res() res: Response) {
     const logs = await this.prisma.auditLog.findMany({
       orderBy: { timestamp: 'desc' },

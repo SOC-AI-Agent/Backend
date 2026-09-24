@@ -1,12 +1,14 @@
 import { Controller, Get, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JobStatus } from '@prisma/client';
 
+import { ApiRoleAuth } from '../../common/decorators/api-docs.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { PrismaService } from '../../prisma/prisma.service';
+import { StatsResponse } from './dto/stats.response';
 
 @ApiTags('Admin')
 @Controller('admin/stats')
@@ -19,6 +21,9 @@ export class StatsController {
 
   @Get()
   @Roles('admin', 'analyst', 'readonly')
+  @ApiRoleAuth('admin', 'analyst', 'readonly')
+  @ApiOperation({ summary: 'Job counts and averages' })
+  @ApiOkResponse({ type: StatsResponse })
   async stats() {
     const [total, byStatus, completedAgg] = await this.prisma.$transaction([
       this.prisma.aiJob.count(),

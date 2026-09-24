@@ -44,12 +44,36 @@ async function bootstrapApi() {
 
   const swagger = new DocumentBuilder()
     .setTitle(config.get<string>('app.appName'))
-    .setDescription('SOC AI Suggestion API — central backend for alert triage jobs')
+    .setDescription(
+      [
+        'Central backend for alert triage jobs.',
+        '',
+        '**How a job moves.** `POST /v1/analyze` returns a `job_id` at once. Stage 1 gathers context ' +
+          '(indicators, ThreatQ, the matching playbook), then two agents with no tools write the suggestion ' +
+          'and what to ask Splunk. Searching Splunk is a separate, later step (`POST /v1/jobs/{job_id}/lookup`): ' +
+          'the backend writes each search itself, and a third agent with no tools reads the results and writes ' +
+          '`final_analysis`, citing them as `[splunk N]`.',
+        '',
+        '**Two ways to sign in.** SOAR and other callers send `X-API-Key` (create one at `POST /admin/api-keys`). ' +
+          'Dashboard users sign in at `POST /auth/login` and send the token as `Authorization: Bearer …`. ' +
+          'Use **Authorize** above; each operation shows which one it needs.',
+        '',
+        '**Errors** are always `{ "detail": "…" }`.',
+      ].join('\n'),
+    )
     .setVersion('1.0.0')
     .addBearerAuth()
     .addApiKey({ type: 'apiKey', name: 'X-API-Key', in: 'header' }, 'X-API-Key')
+    .addTag('Analysis', 'Submit an alert and read the job: the suggestion, the Splunk results, the analysis.')
+    .addTag('Authentication', 'Sign in for the dashboard.')
+    .addTag('Admin', 'Users, API keys, the audit log and the counters. Admin (and, for keys and stats, analyst) only.')
+    .addTag('System', 'Health.')
+    .addTag('Internal', 'Diagnostics that are off unless enabled.')
     .build();
-  SwaggerModule.setup('docs', app, SwaggerModule.createDocument(app, swagger));
+  // persistAuthorization: a page reload does not throw the token away.
+  SwaggerModule.setup('docs', app, SwaggerModule.createDocument(app, swagger), {
+    swaggerOptions: { persistAuthorization: true },
+  });
 
   const port = config.get<number>('app.port');
   await app.listen(port, '0.0.0.0');

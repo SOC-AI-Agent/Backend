@@ -1,8 +1,9 @@
 import { Controller, Get } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { AiService } from '../ai/ai.service';
+import { HealthResponse, RootResponse } from './dto/health.response';
 
 @ApiTags('System')
 @Controller()
@@ -13,6 +14,8 @@ export class HealthController {
   ) {}
 
   @Get('health')
+  @ApiOperation({ summary: 'Is it up', description: 'No authentication. `ai_service` is whether `soc-ai` answered.' })
+  @ApiOkResponse({ type: HealthResponse })
   async health() {
     return {
       status: 'ok',
@@ -23,6 +26,8 @@ export class HealthController {
   }
 
   @Get()
+  @ApiOperation({ summary: 'Where the docs are' })
+  @ApiOkResponse({ type: RootResponse })
   root() {
     return {
       message: `Welcome to ${this.config.get<string>('app.appName')}`,

@@ -1,14 +1,17 @@
 import { Body, Controller, Get, HttpCode, Post, Req, UnauthorizedException, UseGuards } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { Request } from 'express';
 
+import { ApiJwtAuth } from '../../common/decorators/api-docs.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { ErrorResponse } from '../../common/dto/error.response';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { clientIp } from '../../common/request-context';
 import { AuthUser } from '../../common/types/auth-user';
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from './auth.service';
 import { LoginDto, RefreshDto } from './dto/login.dto';
+import { MeResponse, TokenResponse } from './dto/token.response';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -20,6 +23,9 @@ export class AuthController {
 
   @Post('login')
   @HttpCode(200)
+  @ApiOperation({ summary: 'Sign in', description: 'Returns a token pair. Send `access_token` as `Authorization: Bearer …`, or paste it into Authorize.' })
+  @ApiOkResponse({ type: TokenResponse })
+  @ApiUnauthorizedResponse({ type: ErrorResponse, description: 'Wrong username or password.' })
   async login(@Body() body: LoginDto, @Req() req: Request) {
     const user = await this.auth.authenticate(body.username, body.password);
 
@@ -52,6 +58,9 @@ export class AuthController {
 
   @Post('refresh')
   @HttpCode(200)
+  @ApiOperation({ summary: 'Exchange a refresh token for a new pair' })
+  @ApiOkResponse({ type: TokenResponse })
+  @ApiUnauthorizedResponse({ type: ErrorResponse, description: 'The refresh token is invalid, expired or revoked.' })
   async refresh(@Body() body: RefreshDto) {
     const tokens = await this.auth.refresh(body.refresh_token);
     if (!tokens) throw new UnauthorizedException('Invalid or expired refresh token');
@@ -60,6 +69,9 @@ export class AuthController {
 
   @Get('me')
   @UseGuards(JwtAuthGuard)
+  @ApiJwtAuth()
+  @ApiOperation({ summary: 'Who the token belongs to' })
+  @ApiOkResponse({ type: MeResponse })
   me(@CurrentUser() user: AuthUser) {
     return {
       id: user.id,

@@ -6,10 +6,12 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 
+import { ApiRoleAuth } from '../../common/decorators/api-docs.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { ErrorResponse } from '../../common/dto/error.response';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -17,6 +19,7 @@ import { AuthUser } from '../../common/types/auth-user';
 import { clientIp } from '../../common/request-context';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { DbSchemaResponse } from './dto/db-schema.response';
 
 type SchemaColumn = {
   table_name: string;
@@ -30,6 +33,7 @@ type SchemaColumn = {
 @Controller('internal/db')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('admin')
+@ApiRoleAuth('admin')
 export class InternalController {
   constructor(
     private readonly config: ConfigService,
@@ -38,6 +42,14 @@ export class InternalController {
   ) {}
 
   @Get('schema')
+  @ApiOperation({
+    summary: 'Table and column metadata of the database',
+    description:
+      'For inspecting a production schema before a migration is baselined. Off unless `DB_SCHEMA_DEBUG=true`: ' +
+      'otherwise this answers 404 as if it did not exist. Columns named like a password, secret, token, hash or API key are left out. Every call is audited.',
+  })
+  @ApiOkResponse({ type: DbSchemaResponse })
+  @ApiNotFoundResponse({ type: ErrorResponse, description: 'DB_SCHEMA_DEBUG is not true.' })
   async schema(@CurrentUser() user: AuthUser, @Req() req: Request) {
     if (!this.config.get<boolean>('diagnostics.schemaDebug', false)) {
       throw new NotFoundException();
