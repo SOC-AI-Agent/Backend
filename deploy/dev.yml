@@ -80,7 +80,7 @@ services:
     container_name: soc-core-api
     command: node dist/main.js
     environment: {APP_ROLE: api}
-    ports: ["8000:8000"]
+    ports: ["8081:8000"]
     env_file: ["${REPOS:-..}/Backend/.env"]
     volumes: ["${REPOS:-..}/MCP-Server/Splunk/catalog:/catalog:ro"]
     depends_on:
@@ -103,7 +103,7 @@ services:
   soc-frontend:
     build: ${REPOS:-..}/Frontend
     container_name: soc-frontend
-    ports: ["3000:80"]
+    ports: ["3001:80"]
     depends_on: [soc-core-api]
     networks: [soc-network]
 

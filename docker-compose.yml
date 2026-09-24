@@ -45,14 +45,14 @@ services:
     command: node dist/main.js
     environment:
       APP_ROLE: api
-    ports: ["8000:8000"]
+    ports: ["8081:8000"]
     env_file: [.env]
     volumes:
-      # The data catalogue and the lookup plans, owned by soc-mcp-server. The
+      # The data catalogue and the lookup plans, owned by MCP-Server. The
       # backend reads them to aim a search at the right index and field before
       # any model runs — the one cross-repo file dependency, and it is
       # read-only on this side.
-      - ${MCP_CATALOG_PATH:-../soc-mcp-server/Splunk/catalog}:/catalog:ro
+      - ${MCP_CATALOG_PATH:-../MCP-Server/Splunk/catalog}:/catalog:ro
     depends_on:
       soc-db: {condition: service_healthy}
       soc-redis: {condition: service_healthy}
@@ -72,7 +72,7 @@ services:
       APP_ROLE: worker
     env_file: [.env]
     volumes:
-      - ${MCP_CATALOG_PATH:-../soc-mcp-server/Splunk/catalog}:/catalog:ro
+      - ${MCP_CATALOG_PATH:-../MCP-Server/Splunk/catalog}:/catalog:ro
     depends_on:
       soc-db: {condition: service_healthy}
       soc-redis: {condition: service_healthy}

@@ -66,7 +66,7 @@ services:
     container_name: soc-core-api
     command: node dist/main.js
     environment: {APP_ROLE: api}
-    ports: ["8000:8000"]
+    ports: ["8081:8000"]
     env_file: [../.env]
     volumes: ["${REPOS:-..}/MCP-Server/Splunk/catalog:/catalog:ro"]
     depends_on:
@@ -113,7 +113,9 @@ services:
     build: ${REPOS:-..}/MCP-Server/Splunk
     container_name: soc-mcp-splunk
     env_file: ["${REPOS:-..}/MCP-Server/.env"]
-    volumes: ["${REPOS:-..}/MCP-Server/Splunk/catalog:/catalog:ro"]
+    volumes:
+      - ${REPOS:-..}/MCP-Server/Splunk/catalog:/catalog:ro
+      - ${REPOS:-..}/MCP-Server/certs:/certs:ro
     restart: unless-stopped
     networks: [soc-network]
 
@@ -121,6 +123,7 @@ services:
     build: ${REPOS:-..}/MCP-Server/Threatq
     container_name: soc-mcp-threatq
     env_file: ["${REPOS:-..}/MCP-Server/.env"]
+    volumes: ["${REPOS:-..}/MCP-Server/certs:/certs:ro"]
     restart: unless-stopped
     networks: [soc-network]
 
@@ -128,7 +131,7 @@ services:
     build: ${REPOS:-..}/MCP-Server/Confluence
     container_name: soc-mcp-confluence
     env_file: ["${REPOS:-..}/MCP-Server/.env"]
-    volumes: ["${REPOS:-..}/MCP-Server/Confluence/tests:/playbooks:ro"]
+    volumes: ["${REPOS:-..}/MCP-Server/certs:/certs:ro"]
     restart: unless-stopped
     networks: [soc-network]
 
@@ -136,7 +139,7 @@ services:
   soc-frontend:
     build: ${REPOS:-..}/Frontend
     container_name: soc-frontend
-    ports: ["3000:80"]
+    ports: ["3001:80"]
     depends_on: [soc-core-api]
     restart: unless-stopped
     networks: [soc-network]

@@ -14,7 +14,7 @@ API_KEY = os.environ.get("SOC_API_KEY", "")
 if not API_KEY:
     sys.exit("set SOC_API_KEY — issue one on the API Keys page, or with "
              "POST /admin/api-keys using an admin JWT")
-BASE_URL = os.environ.get("SOC_BASE_URL", "http://localhost:8000")
+BASE_URL = os.environ.get("SOC_BASE_URL", "http://localhost:8081")
 ANALYZE_URL = f"{BASE_URL}/v1/analyze"
 RESULTS_URL = f"{BASE_URL}/v1/results"
 
