@@ -1,28 +1,32 @@
-# ทดสอบด้วยมือ — Splunk, MCP, Agent
+# ทดสอบด้วยมือ — Splunk
 
-เอกสารนี้สำหรับตอนคำตอบของ agent ดูผิด แล้วต้องหาว่าผิดตรงไหน
+เอกสารนี้สำหรับตอนผลค้น Splunk ดูผิด แล้วต้องหาว่าผิดตรงไหน
 
-คำถามแรกไม่ใช่ "model คิดผิดหรือเปล่า" แต่คือ **"tool คืนค่าตรงที่เราคิดไหม"**
-ซึ่งตอบได้โดยไม่ต้องใช้ model เลย
+Splunk ไม่ผ่าน MCP และไม่ผ่าน model แล้ว — Backend วางแผนการค้นจาก catalogue
+แล้วยิง connector (`soc-mcp-splunk`) ตรงๆ ผ่าน HTTP ดังนั้นคำถามแรกคือ
+**"connector คืนค่าตรงที่เราคิดไหม"** ซึ่งตอบได้โดยไม่ต้องใช้ model เลย
 
 ---
 
 ## 3 ชั้นที่แยกทดสอบได้
 
 ```
-ชั้น 3   agent run            model เลือก tool เอง       -> ตอบ "ทั้งระบบทำงานไหม"
-ชั้น 2   เรียก tool เอง       เราเลือก argument เอง      -> ตอบ "MCP แปลงถูกไหม"
-ชั้น 1   ยิง Splunk ตรงๆ      เราเขียน SPL เอง           -> ตอบ "SPL ที่ถูกคืออะไร"
+ชั้น 3   ขั้น Splunk ของ Backend   Backend วางแผน แล้วยิง connector  -> ตอบ "ทั้งระบบทำงานไหม"
+ชั้น 2   เรียก connector เอง       เราเลือก parameter เอง            -> ตอบ "route แปลงเป็น SPL ถูกไหม"
+ชั้น 1   ยิง Splunk ตรงๆ           เราเขียน SPL เอง                  -> ตอบ "SPL ที่ถูกคืออะไร"
 ```
 
 ไล่จากล่างขึ้นบน เจอความต่างระหว่างชั้นไหน ปัญหาอยู่ชั้นนั้น
 
 | อาการ | แปลว่า |
 | --- | --- |
-| ชั้น 1 ได้ข้อมูล, ชั้น 2 ไม่ได้ | tool แปลง parameter เป็น SPL ผิด หรือ index ไม่อยู่ใน allowlist |
-| ชั้น 2 ได้ข้อมูล, ชั้น 3 ไม่ได้ | model เรียก tool ด้วย argument ที่ผิด — ดู trace |
-| ทั้งสามได้ข้อมูล แต่คำตอบผิด | model ตีความผิด — ปัญหาที่ system prompt |
+| ชั้น 1 ได้ข้อมูล, ชั้น 2 ไม่ได้ | route แปลง parameter เป็น SPL ผิด, index ไม่อยู่ใน allowlist, หรือ field ที่ส่งไปไม่ใช่ field ที่ข้อมูลใช้จริง |
+| ชั้น 2 ได้ข้อมูล, ชั้น 3 ไม่ได้ | Backend วางแผนผิด — ดู `index`, `sourcetype`, `fields` และ `spl` ใน `lookup_result` (ปัญหาอยู่ที่ catalogue หรือตารางคำถาม) |
+| ทั้งสามได้ข้อมูล แต่ analyst อ่านผิด | การ render คำตอบหรือ prompt ฝั่ง Backend ไม่ใช่ Splunk |
 | ชั้น 1 ก็ไม่ได้ | SPL ผิด หรือไม่มีข้อมูลจริง |
+
+**ผลว่างไม่ได้แปลว่าไม่มีข้อมูล** — field ที่ส่งไปผิดชื่อก็ได้ผลว่างเหมือนกัน
+ดู `fields_searched` และ `spl` ในผลทุกครั้งก่อนสรุป
 
 ---
 
@@ -59,288 +63,166 @@ curl -sk -u "$SPLUNK_ADMIN:$SPLUNK_PW" -X POST "$SPLUNK/services/search/jobs" \
 
 ---
 
-## ชั้น 2 — เรียก tool เองผ่าน MCP ไม่ใช้ model
+## ชั้น 2 — เรียก connector เอง ไม่ใช้ Backend
 
-**ไม่มี tool ไหนรับ SPL ดิบ** ทั้ง 4 ตัวสร้าง SPL เองจาก parameter ผ่าน
-[`spl.py`](../mcp-server/Splunk/spl.py) นี่คือ safety boundary ทั้งหมดของ connector —
-ถ้ามี tool รับ search string เมื่อไหร่ model ก็เรียกได้ด้วย แล้ว `| delete`
-ก็กลับมาอยู่ในมือ model
-
-สิ่งที่ทำได้คือเลือก tool และ argument เอง แล้วดู SPL ที่มันสร้าง
-
-### แบบที่ 1 — ผ่าน HTTP (ง่ายสุด)
-
-```bash
-curl -s -X POST localhost:8400/mcp-servers/call \
-  -H 'Content-Type: application/json' \
-  -d '{"server":"splunk","tool":"search_events",
-       "arguments":{"index":"main","earliest":"-24h",
-                    "filters":{"action":"blocked"},"max_count":3}}' \
-  | python3 -m json.tool
-```
-
-ได้ SPL ที่สร้างจริงกลับมาด้วย:
-
-```json
-{"is_error": false, "duration_ms": 677,
- "result": {"count": 3, "spl": "search index=\"main\" action=\"blocked\" | head 3",
-            "events": [...]}}
-```
-
-ใน Swagger `/docs` ก็กด **Try it out** ได้เหมือนกัน
-
-ดูว่า server publish tool อะไร พร้อม schema:
-
-```bash
-curl -s localhost:8400/mcp-servers/splunk/tools | python3 -m json.tool
-```
-
-### แบบที่ 2 — ยิง MCP ตรงๆ ด้วย curl
-
-ไม่ต้องมี `llm-server` เลย ใช้ตอนสงสัยว่า `llm-server` เองเป็นตัวที่แปลงผิด
-
-MCP server ของเราเป็น **stateless** (`stateless_http=True`) จึงยิง JSON-RPC
-ก้อนเดียวได้เลย ไม่ต้อง `initialize` ก่อน
+**ไม่มี route ไหนรับ SPL ดิบ** ทุก route สร้าง SPL เองจาก parameter ผ่าน
+[`spl.py`](../../MCP-Server/Splunk/spl.py) นี่คือ safety boundary ทั้งหมดของ connector
 
 connector ไม่ publish port ออกนอก จึงต้องยิงจากใน network:
 
 ```bash
-export MCP_AUTH_TOKEN='<ค่าใน .env>'
+export MCP_AUTH_TOKEN='<ค่าใน MCP-Server/.env>'
 
-mcp() {
+splunk() {   # splunk <path> '<json>'
   docker run --rm --network soc-network curlimages/curl -s -X POST \
-    http://soc-mcp-splunk:8200/mcp \
+    "http://soc-mcp-splunk:8200$1" \
     -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
     -H 'Content-Type: application/json' \
-    -H 'Accept: application/json, text/event-stream' \
-    -d "$1"
+    -d "$2"
 }
 ```
 
-**ดูว่ามี tool อะไร พร้อม schema ที่ model เห็น**
+**`/search` — indicator หนึ่งตัวใน field ที่เก็บมัน** (สิ่งที่ Backend ยิงจริง)
 
 ```bash
-mcp '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+splunk /search '{"indicator":"10.1.100.11","indicator_type":"ip",
+                 "fields":["srcip","dstip"],"index":"main"}' | python3 -m json.tool
 ```
 
-ตอบกลับเป็น SSE บรรทัดเดียว — ตัด `data: ` ออกแล้วอ่านง่ายขึ้น:
+ได้ SPL ที่สร้างจริงกลับมาด้วย:
+
+```
+"spl": "search index=\"main\" (srcip=\"10.1.100.11\" OR dstip=\"10.1.100.11\") | head 20"
+```
+
+ผลมี `count`, `capped` (ถึงเพดานแล้วหรือยัง), `fields_searched`, `events[].matched_on`
+(event นี้ match ด้วย field ไหน — บอกว่าเป็นขาออกหรือขาเข้า) และ `spl`
+
+**`/summarise` — นับ/จัดกลุ่มแทนการลิสต์**
 
 ```bash
-mcp '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
-  | sed -n 's/^data: //p' \
-  | python3 -c "
-import json,sys
-for t in json.load(sys.stdin)['result']['tools']:
-    schema = t['inputSchema']
-    req = set(schema.get('required', []))
-    args = ', '.join(f'{p}*' if p in req else p for p in schema.get('properties', {}))
-    print(f\"{t['name']}({args})\")
-print()
-print('* = required')"
+splunk /summarise '{"index":"main","filters":{"srcip":"10.1.100.11"},
+                    "group_by":["dstip"],"metrics":[{"fn":"count"}],"sort":"-count"}'
 ```
 
-```
-list_indexes()
-search_events(index*, earliest, latest, sourcetype, host, filters, max_count)
-alert_frequency(alert_name*, days)
-related_events(indicator*, indicator_type*, earliest, latest, max_count)
-
-* = required
-```
-
-**เรียก tool**
+**`/frequency` — alert นี้ยิงบ่อยแค่ไหน**
 
 ```bash
-mcp '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
-       "name":"search_events",
-       "arguments":{"index":"main","earliest":"-24h",
-                    "filters":{"action":"blocked"},"max_count":2}}}'
+splunk /frequency '{"alert_name":"<ชื่อ alert ตามที่ Splunk เก็บ>","days":7}'
 ```
 
-ผลลัพธ์ห่อสองชั้น (SSE แล้วก็ JSON-RPC) แกะออกมาดู SPL กับจำนวน:
+`SPLUNK_ALERT_INDEX` (default `notable`) ต้องอยู่ใน `SPLUNK_ALLOWED_INDEXES` ด้วย ไม่งั้นได้ 400
+
+**`/catalog` — index/sourcetype/field ที่ token นี้เห็นจริง** (ใช้ตอนเขียน catalogue)
 
 ```bash
-mcp '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
-       "name":"search_events",
-       "arguments":{"index":"main","filters":{"action":"blocked"},"max_count":2}}}' \
-  | sed -n 's/^data: //p' \
-  | python3 -c "
-import json,sys
-r = json.load(sys.stdin)['result']
-if r.get('isError'):
-    print('TOOL ERROR:', r['content'][0]['text']); raise SystemExit(1)
-payload = json.loads(r['content'][0]['text'])
-print('SPL:', payload.get('spl'))
-print('count:', payload.get('count'))
-print(json.dumps(payload, indent=2, ensure_ascii=False)[:800])"
+docker run --rm --network soc-network curlimages/curl -s "http://soc-mcp-splunk:8200/catalog" \
+  -H "Authorization: Bearer $MCP_AUTH_TOKEN"
 ```
 
-```
-SPL: search index="main" action="blocked" | head 2
-count: 2
-```
+**ต่อ Splunk ได้ไหม** — `docker compose exec -T soc-mcp-splunk python check_connection.py`
+บอกว่าตกที่ขั้นไหน (`reach` / `auth` / `search`) ดู [Splunk/README.md](../../MCP-Server/Splunk/README.md)
 
-> `sed -n 's/^data: //p'` คือส่วนที่แกะ SSE — คำตอบมาเป็น `event: message` ตามด้วย
-> `data: {json}` ถ้าอยากเห็นดิบๆ ตัด pipe ท้ายออก
+**อ่านสถานะจาก HTTP code:** `400` = request ของเราผิด (`error` บอกว่าค่าไหน),
+`502` = Splunk มีปัญหา (`error` คือเหตุผลของ Splunk: ต่อไม่ได้ / token ถูกปฏิเสธ / ไม่มีสิทธิ์ค้น),
+`401` = token ของ connector ผิด
 
 ---
 
-## ชั้น 3 — รัน agent เต็ม พร้อม trace
+## ชั้น 3 — ขั้น Splunk ของ Backend
+
+ขั้นแรก (agent `soc-suggest`) เขียน requirement เก็บไว้ที่ job; ขั้นที่สองรันมันเมื่อ analyst กดปุ่ม
+(หรืออัตโนมัติถ้า `SPLUNK_LOOKUP_MODE=auto`) — ไม่มี agent ในขั้นนี้
 
 ```bash
-curl -s -X POST localhost:8400/agents/soc-triage/run \
-  -H 'Content-Type: application/json' \
-  -d '{"input":"Alert: srcip=10.1.100.11 action=blocked. Check index main.","save":false}' \
+# 1. ส่ง alert (API key) แล้วรอให้ขั้นแรกเสร็จ — ดู splunk_requirements ที่ job
+curl -s localhost:8081/v1/results/<job_id> -H "X-API-Key: $KEY" | python3 -m json.tool
+
+# 2. รันขั้น Splunk (JWT ของ user — ดู setup.md)
+curl -s -X POST localhost:8081/v1/jobs/<job_id>/lookup -H "Authorization: Bearer $JWT"
+curl -s localhost:8081/v1/jobs/<job_id> -H "Authorization: Bearer $JWT" \
   | python3 -c "
 import json,sys
-d=json.load(sys.stdin)
-print(d['status'], d['steps_used'], 'steps,', d['duration_ms'], 'ms')
-for s in d['trace']:
-    print(' ', s['step'], s['kind'], s.get('tool') or '', json.dumps(s.get('arguments') or {}))
-print(); print(d['output'])"
+j=json.load(sys.stdin)
+print(j['lookup_status'], j['lookup_time_ms'], 'ms')
+for a in j['lookup_result'] or []:
+    print('-', a['requirement'][:70])
+    print('   spl:', a.get('spl'), '| count:', a.get('count'), '| error:', a.get('error'))
+    print('   where:', a.get('index'), a.get('sourcetype'), a.get('fields'))"
 ```
 
-**trace คือของสำคัญ** — บอกว่า model เรียก tool อะไร ด้วย argument อะไร
-ได้กลับมากี่ตัวอักษร โดนตัดไหม
+ดูค่าเหล่านี้ในแต่ละ requirement:
 
-`"truncated": true` มักเป็นคำอธิบายของคำตอบที่ดูขาดๆ
+- `spl` — คำสั่งที่ยิงจริง เอาไปรันต่อใน Splunk ได้เลย (ทางสืบเชิงลึกที่เหลืออยู่คือคนทำต่อจากตรงนี้)
+- `index` / `sourcetype` / `fields` — สิ่งที่ Backend วางแผนจาก catalogue ถ้าผิดที่นี่ ให้แก้ catalogue
+- ข้อความ **`Not searched.`** — ไม่มีแผนที่แปลงเป็นการค้นได้ (ไม่มี field ใน catalogue สำหรับ indicator ชนิดนี้
+  หรือไม่มี index) ไม่ใช่ว่าค้นแล้วไม่เจอ เพิ่ม field ใน catalogue หรือรันเองใน Splunk
+- `error` — ยิง connector ไม่สำเร็จ ไปดูชั้น 2 ด้วย HTTP code ข้างบน
+- `ranBy` เป็น `backend` เสมอ (`agent` มีในงานเก่าที่เก็บไว้ก่อนเอา query agent ออก)
 
-ผ่าน `ai-service` (เหมือนที่ worker เรียกจริง):
-
-```bash
-curl -s -X POST localhost:8100/analyze \
-  -H 'Content-Type: application/json' \
-  -d '{"rendered_prompt":"Alert: … . Check index main."}'
-```
-
-หรือ `POST localhost:8100/llm-probe` ถ้าอยากเห็น raw SSE ที่ LLM Server ส่งมาด้วย
-
----
-
-## ตัวอย่างจริง — หาสาเหตุที่ agent บอก "ไม่พบอะไร"
-
-agent ตอบว่า *"No other events for host 10.1.100.11 in the last 24 hours"*
-
-**ชั้น 3** ดู trace:
-```
-step 1  tool_call  search_events {"index":"main","host":"10.1.100.11","earliest":"-24h"}
-```
-model ใช้ parameter `host`
-
-**ชั้น 2** ลองเอง:
-```bash
-… call search_events '{"index":"main","host":"10.1.100.11"}'
-SPL: search index="main" host="10.1.100.11" | head 20
-{"count": 0}
-```
-ได้ 0 เหมือนกัน แปลว่าไม่ใช่ model แต่งเรื่อง
-
-**ชั้น 1** ถาม Splunk ว่า `host` คืออะไรจริงๆ:
-```
-host = 192.168.65.1        <- เครื่องที่ส่ง log เข้ามา
-srcip = 10.1.100.11        <- IP ที่เราหมายถึง
-```
-
-**สรุป:** log FortiGate ดิบไม่ได้ normalize เป็น CIM — `host` ใน Splunk คือ forwarder
-ไม่ใช่เครื่องต้นทาง ที่ถูกคือ `filters={"srcip":"10.1.100.11"}`
-
-ปัญหาเดียวกันอยู่ใน `related_events` ซึ่ง hardcode ชื่อ CIM ไว้:
-```
-(src_ip="…" OR dest_ip="…" OR src="…" OR dest="…")
-```
-
-**แก้ที่ไหน:** field map ใน [`mcp-server/Splunk/server.py`](../mcp-server/Splunk/server.py)
-ให้ตรงกับ sourcetype จริงขององค์กร
-
-> นี่คือความผิดพลาดประเภทที่อันตรายที่สุด — ไม่มี error ให้เห็น agent รายงานว่า
-> "ไม่พบอะไร" อย่างมั่นใจ แล้ว Tier 1 อ่านแล้วเชื่อ
+หน้า Evidence ของ job (dashboard) แสดงข้อมูลชุดเดียวกัน
 
 ---
 
 ## ทดสอบ guardrail — ของที่ต้อง "พัง"
 
-ใช้ฟังก์ชัน `mcp` จากหัวข้อชั้น 2 ควรได้ error ทุกข้อ ถ้าข้อไหนผ่านแปลว่ามีช่องโหว่
-
-ตัวช่วยอ่านผล:
-
-```bash
-check() { sed -n 's/^data: //p' | python3 -c "
-import json,sys
-r = json.load(sys.stdin)['result']
-print('isError:', bool(r.get('isError')))
-t = r['content'][0]['text']
-try:
-    p = json.loads(t); print('SPL:', p.get('spl')); print('count:', p.get('count'))
-except ValueError:
-    print(t[:200])"; }
-```
+ใช้ฟังก์ชัน `splunk` จากหัวข้อชั้น 2 ทุกข้อควรถูกปฏิเสธหรือถูก escape ถ้าข้อไหนผ่านแปลว่ามีช่องโหว่
 
 **index นอก allowlist**
 
 ```bash
-mcp '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
-       "name":"search_events","arguments":{"index":"_internal","max_count":1}}}' | check
+splunk /search '{"indicator":"10.1.100.11","indicator_type":"ip","fields":["srcip"],"index":"_internal"}'
 ```
 ```
-isError: True
-Error executing tool search_events: index '_internal' is not allowed; permitted: main
+{"error":"index '_internal' is not allowed; permitted: main, notable"}     # HTTP 400
 ```
 
 **SPL injection** — ยัดคำสั่งลงใน value
 
 ```bash
-mcp '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
-       "name":"search_events","arguments":{"index":"main",
-       "filters":{"action":"blocked\" | delete | head 1"},"max_count":2}}}' | check
+splunk /summarise '{"index":"main","filters":{"action":"blocked\" | delete | head 1"},"metrics":[{"fn":"count"}]}'
 ```
 ```
-isError: False
-SPL: search index="main" action="blocked\" | delete | head 1" | head 2
-count: 0
+"spl": "search index=\"main\" action=\"blocked\\\" | delete | head 1\" | stats count | head 50"
 ```
 
-`"` ถูก escape เป็น `\"` ทั้งก้อนยังอยู่ในเครื่องหมายคำพูด `| delete` จึงเป็น
-ข้อความที่ไม่ match อะไร ไม่ใช่คำสั่ง — **ดู `SPL:` ที่คืนมาเพื่อยืนยัน** ไม่ใช่ดูแค่
-`count: 0`
+`"` ถูก escape เป็น `\"` ทั้งก้อนยังอยู่ในเครื่องหมายคำพูด `| delete` จึงเป็นข้อความ
+ที่ไม่ match อะไร ไม่ใช่คำสั่ง — **ดู `spl` ที่คืนมาเพื่อยืนยัน** ไม่ใช่ดูแค่จำนวนผลลัพธ์
 
 **เพดานจำนวนแถว**
 
 ```bash
-mcp '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
-       "name":"search_events","arguments":{"index":"main","max_count":9999}}}' | check
+splunk /summarise '{"index":"main","max_rows":9999}'
 ```
 ```
-SPL: search index="main" | head 200      <- capped ที่ SPLUNK_MAX_COUNT
+"limit": 200,  "spl": "search index=\"main\" | stats count | head 200"     <- capped ที่ SPLUNK_MAX_COUNT
 ```
 
 **ช่วงเวลาเกินขอบ**
 
 ```bash
-mcp '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
-       "name":"alert_frequency","arguments":{"alert_name":"x","days":999}}}' | check
+splunk /frequency '{"alert_name":"x","days":999}'
 ```
 ```
-isError: True
-Error executing tool alert_frequency: days must be between 1 and 90
+{"error":"days must be between 1 and 90"}                                  # HTTP 400
 ```
 
 **auth** — token ผิดต้องไม่ผ่าน
 
 ```bash
-docker run --rm --network soc-network curlimages/curl -s -o /dev/null -w '%{http_code}\n' \
-  -X POST http://soc-mcp-splunk:8200/mcp \
-  -H 'Authorization: Bearer wrong-token' \
-  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+docker run --rm --network soc-network curlimages/curl -s -w ' [%{http_code}]\n' \
+  -X POST http://soc-mcp-splunk:8200/search -H 'Authorization: Bearer wrong-token' -d '{}'
 ```
 ```
-401
+{"detail":"unauthorized"} [401]
 ```
 
 log ฝั่ง connector ควรมี:
 ```
 {"logger":"auth","msg":"rejected unauthenticated request from …"}
 ```
+
+ทุกข้อนี้มี test อัตโนมัติอยู่แล้วใน `MCP-Server/tests/` (`test_splunk_api.py`, `test_auth.py`) — คำสั่งด้านบนไว้ดูด้วยตา
 
 ---
 
@@ -377,7 +259,7 @@ curl -sk -u admin:"$PW" -X POST https://localhost:8089/services/search/jobs \
 docker compose ps
 curl -s localhost:8081/health    # core API  -> ai_service: up
 curl -s localhost:8100/health    # ai-service -> llm_server: true
-curl -s localhost:8400/health    # llm-server -> ollama, agents, mcp_servers
+curl -s localhost:8400/health    # llm-server -> ollama, agents
 docker compose exec soc-mcp-splunk python -c \
   "import urllib.request; print(urllib.request.urlopen('http://localhost:8200/health').read())"
                                  # connector  -> splunk: true
@@ -386,7 +268,7 @@ docker compose exec soc-ollama ollama ps     # model ค้างใน memory �
 docker compose logs -f soc-mcp-splunk        # SPL ทุกอันที่ยิงจริงถูก log ไว้
 ```
 
-log ของ connector บันทึก SPL ทุกครั้งที่ค้น — ตรวจย้อนได้ว่า agent สั่งอะไรไป:
+log ของ connector บันทึก SPL ทุกครั้งที่ค้น — ตรวจย้อนได้ว่า Backend สั่งอะไรไป:
 
 ```
 {"logger":"splunk","msg":"splunk search spl=search index=\"main\" | head 200 earliest=-24h latest=now"}

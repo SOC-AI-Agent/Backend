@@ -100,30 +100,21 @@ user คนถัดไปสร้างผ่านหน้า Users ด้�
 
 ## 5. สร้าง agent
 
-`soc-ai` เรียก agent ตามชื่อใน `LLM_DEFAULT_AGENT` (default `soc-triage`)
+Backend เรียก agent `soc-suggest` (ตั้งชื่อด้วย `LLM_SUGGEST_AGENT`) เพื่อเขียนคำแนะนำขั้นแรก
 **ถ้ายังไม่มี agent นั้น job จะ fail ทุกใบ**
 
-เปิด `http://localhost:8400` → New agent
+agent นี้ไม่มี tool และไม่ต่อ MCP server ตัวไหน — อ่าน alert กับข้อมูลที่ Backend เตรียมไว้
+แล้วเขียนคำตอบ ส่วนการค้น Splunk Backend ทำเองหลังจากนั้น ไม่ผ่าน agent
 
-| ช่อง | ใส่อะไร |
-| --- | --- |
-| Name | ตรงกับ `LLM_DEFAULT_AGENT` |
-| Model | เลือกจาก dropdown (เห็นเฉพาะที่ pull ไว้จริง) |
-| System prompt | พฤติกรรมของ agent |
-| Context | **8192** ถ้าใช้ tool — schema กับผล tool แย่ง context กับ alert |
-| MCP servers | ติ๊ก `splunk` ถ้าให้ค้น log ได้ |
-
-หรือทาง API:
+สร้างจากไฟล์ที่ commit ไว้:
 
 ```bash
-curl -s -X POST localhost:8400/agents -H 'Content-Type: application/json' -d '{
-  "name": "soc-triage",
-  "model": "qwen2.5:7b",
-  "system_prompt": "You are a SOC Tier-1 triage agent. Use ONLY facts from the alert and tool results. Do NOT recommend actions.",
-  "temperature": 0.1, "num_ctx": 8192, "max_steps": 4, "max_tool_chars": 4000,
-  "mcp_servers": ["splunk"], "delegates": [], "enabled": true
-}'
+curl -s -X POST localhost:8400/agents -H 'Content-Type: application/json' \
+  -d @../LLM-Server/agents/soc-suggest.json
 ```
+
+หรือเปิด `http://localhost:8400` → New agent แล้วกรอกตามไฟล์นั้น (Model เลือกจาก dropdown
+ซึ่งเห็นเฉพาะที่ pull ไว้จริง) — `LLM_DEFAULT_AGENT` (default `soc-suggest`) มีไว้สำหรับผู้เรียกที่ไม่ระบุชื่อ agent
 
 ---
 
