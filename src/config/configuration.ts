@@ -52,17 +52,21 @@ export default () => ({
     /** Reported back to callers / stored on the job row. */
     model: process.env.OLLAMA_MODEL,
     /**
-     * The agent behind the first answer: one call, no tools, producing the
-     * suggestion and the list of what it would want from Splunk. Naming it
-     * here rather than leaving it to the AI service's default keeps the two
-     * stages from silently becoming the same agent again.
+     * The agent behind the first answer: one call, no tools, writing the
+     * suggestion. What to ask Splunk is a second call to a second agent, and
+     * what the results mean is a third. Naming each here rather than leaving it
+     * to the AI service's default keeps them from silently becoming the same
+     * agent again.
      */
     suggestAgent: process.env.LLM_SUGGEST_AGENT ?? 'soc-suggest',
+    /** Stage 1b: reads the alert and the suggestion, writes what to ask Splunk. */
+    requirementsAgent: process.env.LLM_REQUIREMENTS_AGENT ?? 'soc-requirements',
+    /** Stage 3: reads the suggestion and the Splunk results, writes the second reading. */
+    concludeAgent: process.env.LLM_CONCLUDE_AGENT ?? 'soc-conclude',
     /**
-     * How long to wait on soc-ai. This is the whole chain — soc-ai calls the
-     * LLM server, which runs the analysing agent, which delegates to the
-     * query agent, which queries Splunk — so it has to be longer than the
-     * LLM server's own LLM_TIMEOUT, not shorter. At 120s every job died on
+     * How long to wait on soc-ai for ONE agent call — soc-ai calls the LLM
+     * server, which runs the agent — so it has to be longer than the LLM
+     * server's own LLM_TIMEOUT, not shorter. At 120s every job died on
      * a timeout while the agents were still working.
      *
      * OLLAMA_TIMEOUT is still read for older .env files, but the backend has
@@ -84,11 +88,26 @@ export default () => ({
   },
   splunk: {
     /**
-     * The Splunk connector's HTTP base. Used for planned searches, which the
-     * backend runs itself — the connector's /search route, not its MCP tools.
+     * The Splunk connector's HTTP base. The backend builds every search itself
+     * (modules/enrichment/spl.ts) and sends the SPL to the connector's /query
+     * route, which runs it.
      */
     url: process.env.SPLUNK_MCP_URL ?? 'http://soc-mcp-splunk:8200',
     token: process.env.MCP_AUTH_TOKEN ?? '',
+    /**
+     * Which indexes a search may name, or "*" to opt out on purpose. Built into
+     * every query here, and checked again by the connector — set both the same.
+     * Empty refuses every search rather than searching everything.
+     */
+    allowedIndexes: (process.env.SPLUNK_ALLOWED_INDEXES ?? '')
+      .split(',')
+      .map((i) => i.trim())
+      .filter(Boolean),
+    /** Ceiling on rows, whatever a plan asks for. */
+    maxCount: toInt(process.env.SPLUNK_MAX_COUNT, 200),
+    /** Where correlation-search alerts land, and the field holding their name. Splunk ES defaults. */
+    alertIndex: process.env.SPLUNK_ALERT_INDEX ?? 'notable',
+    alertNameField: process.env.SPLUNK_ALERT_NAME_FIELD ?? 'search_name',
     // A planned search is one Splunk call. The 0.4s measured here is typical;
     // this is a ceiling on a slow search head, not a budget for inference.
     timeoutMs: toInt(process.env.SPLUNK_SEARCH_TIMEOUT, 120) * 1000,
@@ -105,6 +124,11 @@ export default () => ({
     mode: (process.env.SPLUNK_LOOKUP_MODE ?? 'manual').toLowerCase() === 'auto'
       ? 'auto'
       : 'manual',
+    /**
+     * Whether the results are read by an agent once they are in. Off leaves the
+     * answers as they are, for a deployment that does not want another model call.
+     */
+    analyse: toBool(process.env.SPLUNK_LOOKUP_ANALYSE, true),
     /** A cap on how many of stage 1's requirements are actually run. */
     maxRequirements: toInt(process.env.SPLUNK_LOOKUP_MAX_REQUIREMENTS, 5),
   },
