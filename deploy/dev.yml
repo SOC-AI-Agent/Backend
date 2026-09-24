@@ -70,8 +70,10 @@ services:
   soc-ai:
     build: ${REPOS:-..}/AI-Service
     container_name: soc-ai
-    ports: ["8100:8100"]
+    # No ports: only the backend calls it, over soc-network, with a token.
     env_file: ["${REPOS:-..}/AI-Service/.env"]
+    # The playbook index, so a restart does not embed every page again.
+    volumes: [dev-playbook-index:/data]
     depends_on: [soc-llm-server]
     networks: [soc-network]
 
@@ -114,6 +116,7 @@ volumes:
   dev-redis:
   dev-ollama:
   dev-agents:
+  dev-playbook-index:
 
 networks:
   soc-network:

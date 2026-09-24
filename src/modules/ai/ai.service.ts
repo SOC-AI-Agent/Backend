@@ -17,16 +17,26 @@ export interface AiGenerateResult {
 /**
  * Thin HTTP client for the Python AI service (../ai-service).
  *
- * The AI service is stateless: it owns no database, no queue and no job state.
- * It takes a fully rendered prompt and returns the model's text. Everything
- * else — job rows, retries, audit trail — stays here in the core backend.
+ * The AI service owns no database, no queue and no job state. It takes a fully
+ * rendered prompt and returns the model's text. Everything else — job rows,
+ * retries, audit trail — stays here in the core backend. The one thing it keeps
+ * is the playbook index, on its own volume, rebuilt from what this side sends.
  *
  *   POST {AI_SERVICE_URL}/analyze
  *     body  { rendered_prompt: string, agent?: string, model?: string }
  *     reply { response, model, total_duration_ms, tokens_prompt, tokens_eval }
  *
  *   GET  {AI_SERVICE_URL}/health  ->  { status: "ok" }
+ *
+ * Every route but /health needs `Authorization: Bearer AI_SERVICE_AUTH_TOKEN`.
+ * The playbook routes on the same service are called from PlaybookService and
+ * PlaybookSyncService.
  */
+/** The Authorization header for a token, or none when it is unset. */
+export function bearer(token: string | undefined): Record<string, string> {
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
@@ -62,7 +72,7 @@ export class AiService {
     renderedPrompt: string,
     options: { agent?: string; model?: string } = {},
   ): Promise<AiGenerateResult> {
-    const { baseUrl, timeoutMs, model: defaultModel } = this.config.get('ai');
+    const { baseUrl, timeoutMs, model: defaultModel, token } = this.config.get('ai');
 
     try {
       const { data } = await firstValueFrom(
@@ -73,7 +83,7 @@ export class AiService {
             agent: options.agent,
             model: options.model ?? defaultModel,
           },
-          { timeout: timeoutMs },
+          { timeout: timeoutMs, headers: bearer(token) },
         ),
       );
 

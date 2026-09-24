@@ -37,6 +37,7 @@ gen() { openssl rand -hex 32; }
 MCP_TOKEN="$(gen)"
 THREATQ_TOKEN="$(gen)"
 CONFLUENCE_TOKEN="$(gen)"
+AI_TOKEN="$(gen)"
 JWT_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
 PG_PASSWORD="$(gen)"
 
@@ -69,6 +70,7 @@ echo "Generating .env files"
 MCP_AUTH_TOKEN="$MCP_TOKEN" \
 THREATQ_MCP_AUTH_TOKEN="$THREATQ_TOKEN" \
 CONFLUENCE_MCP_AUTH_TOKEN="$CONFLUENCE_TOKEN" \
+AI_SERVICE_AUTH_TOKEN="$AI_TOKEN" \
 JWT_SECRET_KEY="$JWT_SECRET" \
 POSTGRES_PASSWORD="$PG_PASSWORD" \
 SPLUNK_LOOKUP_MODE="manual" \
@@ -79,7 +81,8 @@ THREATQ_MCP_AUTH_TOKEN="$THREATQ_TOKEN" \
 CONFLUENCE_MCP_AUTH_TOKEN="$CONFLUENCE_TOKEN" \
   write_env MCP-Server
 
-write_env AI-Service
+AI_SERVICE_AUTH_TOKEN="$AI_TOKEN" \
+  write_env AI-Service
 write_env LLM-Server
 
 # The LLM server reaches the connectors itself, so it carries the same tokens.

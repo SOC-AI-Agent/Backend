@@ -10,7 +10,8 @@
 #
 # The last one needs saying out loud: the tokens the connectors check
 # (MCP_AUTH_TOKEN, THREATQ_MCP_AUTH_TOKEN, CONFLUENCE_MCP_AUTH_TOKEN) must be
-# byte-identical in this project and in MCP-Server. Set them as GROUP variables
+# byte-identical in this project and in MCP-Server, and AI_SERVICE_AUTH_TOKEN
+# in this project and in AI-Service. Set them as GROUP variables
 # on Agentic-AI-for-Enhancing-SOC, not per project — two projects holding their
 # own copy is two copies that drift, and the failure is a 401 with nothing
 # saying why.

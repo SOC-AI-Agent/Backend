@@ -275,7 +275,8 @@ curl -sk -u admin:"$PW" -X POST https://localhost:8089/services/search/jobs \
 ```bash
 docker compose ps
 curl -s localhost:8081/health    # core API  -> ai_service: up
-curl -s localhost:8100/health    # ai-service -> llm_server: true
+docker exec soc-ai python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8100/health').read())"
+                                 # ai-service -> llm_server: true (ไม่เปิด port แล้ว)
 curl -s localhost:8400/health    # llm-server -> ollama, agents
 docker compose exec soc-mcp-splunk python -c \
   "import urllib.request; print(urllib.request.urlopen('http://localhost:8200/health').read())"

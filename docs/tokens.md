@@ -51,6 +51,16 @@ openssl rand -hex 32   # รันแยกกัน คนละค่า
 **ทำไมต้องมี** — connector พวกนี้ไม่ publish port ออกนอกเครื่อง แต่ทุก container
 ใน `soc-network` ยิงถึงได้ ไม่มี token = ใครอยู่ในเน็ตเวิร์กนั้นก็ query Splunk ได้ฟรี
 
+### `AI_SERVICE_AUTH_TOKEN` — สำหรับ `soc-ai`
+
+```bash
+openssl rand -hex 32
+```
+
+ใส่ค่าเดียวกันใน `Backend/.env` และ `AI-Service/.env` (ใน GitLab ตั้งเป็น group variable
+ตัวเดียว) — `soc-ai` ไม่ยอมขึ้นถ้าไม่มี ทุก route ยกเว้น `/health` ต้องใช้ ทั้งการรัน agent
+และการเขียน playbook index ไม่มี token = อะไรก็ตามใน `soc-network` สั่ง agent หรือแก้ index ได้
+
 ### `POSTGRES_PASSWORD`
 
 ```bash
@@ -209,11 +219,12 @@ python3 test_full_flow.py
 ```bash
 cp .env.example .env
 
-# สุ่ม 4 ค่า
+# สุ่ม 5 ค่า
 echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
 echo "JWT_SECRET_KEY=$(openssl rand -hex 32)"
 echo "MCP_AUTH_TOKEN=$(openssl rand -hex 32)"
 echo "THREATQ_MCP_AUTH_TOKEN=$(openssl rand -hex 32)"
+echo "AI_SERVICE_AUTH_TOKEN=$(openssl rand -hex 32)"   # ค่าเดียวกันใน AI-Service/.env
 ```
 
 แก้ `.env` ให้ครบ:
@@ -225,6 +236,7 @@ echo "THREATQ_MCP_AUTH_TOKEN=$(openssl rand -hex 32)"
 | `DEFAULT_ADMIN_PASSWORD` | สงวนไว้ ไม่ถูกอ่าน — ไม่ต้องตั้ง (ดูข้อ 1) |
 | `MCP_AUTH_TOKEN` | สุ่ม |
 | `THREATQ_MCP_AUTH_TOKEN` | สุ่ม |
+| `AI_SERVICE_AUTH_TOKEN` | สุ่ม — ค่าเดียวกับใน `AI-Service/.env` |
 | `SPLUNK_TOKEN` + `SPLUNK_BASE_URL` + `SPLUNK_ALLOWED_INDEXES` | ข้อ 2 |
 | `THREATQ_*` | ข้อ 3 |
 
@@ -243,7 +255,8 @@ docker compose exec soc-core-api npm run seed          # roles only
 
 ```bash
 curl -s localhost:8081/health   # ai_service: "up"
-curl -s localhost:8100/health   # ollama: true
+docker exec soc-ai python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8100/health').read())"
+                                # llm_server: true
 curl -s localhost:8400/health   # agents, mcp_servers
 docker compose exec soc-mcp-splunk python -c \
   "import urllib.request; print(urllib.request.urlopen('http://localhost:8200/health').read())"

@@ -64,6 +64,11 @@ export default () => ({
     /** Stage 3: reads the suggestion and the Splunk results, writes the second reading. */
     concludeAgent: process.env.LLM_CONCLUDE_AGENT ?? 'soc-conclude',
     /**
+     * Bearer token soc-ai requires on every route but /health. Must match
+     * AI_SERVICE_AUTH_TOKEN in AI-Service/.env byte for byte.
+     */
+    token: process.env.AI_SERVICE_AUTH_TOKEN ?? '',
+    /**
      * How long to wait on soc-ai for ONE agent call — soc-ai calls the LLM
      * server, which runs the agent — so it has to be longer than the LLM
      * server's own LLM_TIMEOUT, not shorter. At 120s every job died on
@@ -78,13 +83,22 @@ export default () => ({
   },
   playbook: {
     /**
-     * The Confluence connector. Asked once per alert, before the model runs:
-     * which runbook covers this, and what does it say makes it real.
-     * Unset means the step is skipped — a weaker suggestion, not a failure.
+     * Where the playbook pages come from: the Confluence connector, which holds
+     * the Confluence credentials. The worker reads its GET /pages every
+     * syncMinutes and sends the pages to soc-ai, which extracts, embeds and
+     * matches them. Unset means nothing is synced, and every match says nothing
+     * is indexed — a weaker suggestion, not a failure.
      */
     url: process.env.CONFLUENCE_MCP_URL ?? '',
     token: process.env.CONFLUENCE_MCP_AUTH_TOKEN ?? '',
+    /** One match, asked of soc-ai once per alert before the model runs. */
     timeoutMs: toInt(process.env.PLAYBOOK_TIMEOUT, 15) * 1000,
+    syncMinutes: toInt(process.env.PLAYBOOK_SYNC_MINUTES, 60),
+    /**
+     * Reading the whole space, then indexing it. Only fields whose text changed
+     * are embedded, but the first sync after a fresh volume embeds everything.
+     */
+    syncTimeoutMs: toInt(process.env.PLAYBOOK_SYNC_TIMEOUT, 300) * 1000,
   },
   splunk: {
     /**

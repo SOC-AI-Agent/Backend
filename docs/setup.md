@@ -131,10 +131,26 @@ Backend ต้องตั้ง `SPLUNK_ALLOWED_INDEXES` ด้วย (ชุ�
 
 ```bash
 curl -s localhost:8081/health    # ai_service: "up"
-curl -s localhost:8100/health    # llm_server: true
+docker exec soc-ai python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8100/health').read())"
+                                 # llm_server: true, playbooks: จำนวนที่ index แล้ว
 curl -s localhost:8400/health    # ollama: true, agents: 1
 docker compose exec soc-mcp-splunk python -c \
   "import urllib.request; print(urllib.request.urlopen('http://localhost:8200/health').read())"
+```
+
+### Playbook จาก Confluence
+
+worker อ่าน playbook ทั้ง space ผ่าน Confluence connector (`GET /pages`) ทุก
+`PLAYBOOK_SYNC_MINUTES` แล้วส่งให้ `soc-ai` (`PUT /playbooks/index`) ซึ่ง extract
+field, embed และเก็บ index ลง volume `playbook-index` — embed เฉพาะ field ที่ข้อความเปลี่ยน
+รอบที่ไม่มีอะไรเปลี่ยนจึงไม่ embed เลย ทุก alert จะ match กับ index ของ `soc-ai`
+(ชื่อตรง → สะกดใกล้ → ความหมาย) ไม่ได้ถาม connector แล้ว
+
+ดูว่า index อะไรไปแล้ว และ tier ความหมายทำงานไหม:
+
+```bash
+docker exec soc-ai python -c "import os,urllib.request as u; print(u.urlopen(u.Request('http://localhost:8100/playbooks', headers={'Authorization': 'Bearer '+os.environ['AI_SERVICE_AUTH_TOKEN']})).read().decode())"
+docker compose logs soc-core-worker | grep -i "playbook"   # "playbooks synced: ..." หรือ "playbook sync failed ..."
 ```
 
 container ที่ขาด token จะ **ไม่ยอมขึ้นเลย** พร้อมบอกว่าขาดตัวไหน — ตั้งใจให้ fail
@@ -179,7 +195,7 @@ curl -s localhost:8081/v1/results/<job_id> -H "X-API-Key: $KEY"
 | Agent API (Swagger) | `http://localhost:8400/docs` |
 | Core API | `http://localhost:8081` |
 | Core API docs (Swagger) | `http://localhost:8081/docs` |
-| AI service | `http://localhost:8100/docs` |
+| AI service | ไม่เปิด port — เรียกได้จากใน `soc-network` เท่านั้น และต้องมี `AI_SERVICE_AUTH_TOKEN` |
 
 ---
 

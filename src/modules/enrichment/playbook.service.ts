@@ -3,16 +3,19 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 
+import { bearer } from '../ai/ai.service';
 import { CatalogService } from './catalog.service';
+import { PlaybookSyncService } from './playbook-sync.service';
 
 /**
  * The playbook covering this alert, fetched before any model runs.
  *
- * Matching an alert name to a runbook has one right answer, so it is an HTTP
- * call to the Confluence connector rather than something an agent decides. What
- * comes back is the part of triage a model cannot supply from the log: what
- * makes this detection a true positive, what makes it noise, and what the
- * analyst does next.
+ * An HTTP call to soc-ai's playbook index (POST /playbooks/match) rather than
+ * something an agent decides. The index is built from the Confluence pages
+ * PlaybookSyncService sends it; it matches by name, then by spelling, then by
+ * meaning, and says which. What comes back is the part of triage a model cannot
+ * supply from the log: what makes this detection a true positive, what makes it
+ * noise, and what the analyst does next.
  *
  * That is the gap in the suggestion today. It can say what happened and cannot
  * say whether it matters, because nothing has told it what "matters" means for
@@ -49,12 +52,17 @@ export interface Playbook {
 
 export interface PlaybookMatch {
   matched: boolean;
-  /** exact | fuzzy | miss | empty — a fuzzy match is a guess, and it says so. */
+  /**
+   * exact | fuzzy | semantic | miss | empty | unindexed | error. Fuzzy and
+   * semantic are guesses that cleared a threshold, and they say so.
+   */
   how: string;
   matchedName?: string;
+  /** For a semantic match, which of the playbook's fields the alert was closest to. */
+  matchedField?: string;
   similarity?: number;
   playbook?: Playbook;
-  /** The corpus is yesterday's: a sync failed and the old one is being served. */
+  /** The index is yesterday's: the last sync failed and the one before is being served. */
   stale?: boolean;
   note?: string;
   /** Why the playbook's own search cannot be trusted, when it cannot. */
@@ -69,22 +77,25 @@ export class PlaybookService {
     private readonly http: HttpService,
     private readonly config: ConfigService,
     private readonly catalog: CatalogService,
+    private readonly sync: PlaybookSyncService,
   ) {}
 
   get enabled(): boolean {
-    return Boolean(this.config.get<string>('playbook.url'));
+    return Boolean(this.config.get<string>('ai.baseUrl'));
   }
 
   async match(alertName: string): Promise<PlaybookMatch | null> {
-    const { url, token, timeoutMs } = this.config.get('playbook');
-    if (!url || !alertName?.trim()) return null;
+    const { baseUrl, token } = this.config.get('ai');
+    const { timeoutMs } = this.config.get('playbook');
+    if (!baseUrl || !alertName?.trim()) return null;
 
     try {
       const { data } = await firstValueFrom(
         this.http.post<any>(
-          `${url}/match`,
-          { alert_name: alertName },
-          { timeout: timeoutMs, headers: token ? { Authorization: `Bearer ${token}` } : {} },
+          `${baseUrl}/playbooks/match`,
+          // soc-ai refuses a name over 512 characters; no detection has one.
+          { alert_name: alertName.trim().slice(0, 512) },
+          { timeout: timeoutMs, headers: bearer(token) },
         ),
       );
 
@@ -92,9 +103,10 @@ export class PlaybookService {
         matched: Boolean(data.matched),
         how: data.how ?? 'miss',
         matchedName: data.matched_name,
+        matchedField: data.matched_field,
         similarity: data.similarity,
         playbook: data.playbook ?? undefined,
-        stale: Boolean(data.corpus?.stale),
+        stale: this.sync.stale,
         note: data.note,
       };
 
@@ -103,7 +115,7 @@ export class PlaybookService {
       }
       if (match.stale) {
         this.logger.warn(
-          `playbook corpus is stale (${data.corpus?.error ?? 'a sync failed'}) — ` +
+          `playbook index is stale (${this.sync.state.error ?? 'the last sync failed'}) — ` +
             `"${alertName.slice(0, 50)}" was matched against the last good copy`,
         );
       }
@@ -111,7 +123,7 @@ export class PlaybookService {
     } catch (err: any) {
       // Not fatal. A missing playbook makes the suggestion weaker, not wrong,
       // and failing the whole alert over it would be the worse trade.
-      const said = err?.response?.data?.error ?? err?.message ?? String(err);
+      const said = err?.response?.data?.detail ?? err?.response?.data?.error ?? err?.message ?? String(err);
       this.logger.warn(`playbook lookup failed for "${alertName.slice(0, 50)}": ${said}`);
       return { matched: false, how: 'error', note: `playbook lookup failed: ${said}` };
     }
@@ -174,6 +186,16 @@ export class PlaybookService {
         `Matched by similarity, not exactly (${match.similarity}). The alert is ` +
           `named differently from the playbook, so check the description fits ` +
           `before relying on the criteria below.`,
+      );
+    }
+    if (match.how === 'semantic') {
+      // Weaker still: no name matched at all. The alert's name read closest to
+      // what this playbook says it detects — a guess about meaning.
+      lines.push(
+        `Matched by meaning, not by name (${match.similarity}, closest to its ` +
+          `${(match.matchedField ?? 'description').replace(/_/g, ' ')}). No playbook ` +
+          `carries this alert's name, so check the description fits before relying ` +
+          `on the criteria below.`,
       );
     }
     if (match.stale) {
