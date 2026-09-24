@@ -178,6 +178,7 @@ curl -s localhost:8081/v1/results/<job_id> -H "X-API-Key: $KEY"
 | Agent UI | `http://localhost:8400` |
 | Agent API (Swagger) | `http://localhost:8400/docs` |
 | Core API | `http://localhost:8081` |
+| Core API docs (Swagger) | `http://localhost:8081/docs` |
 | AI service | `http://localhost:8100/docs` |
 
 ---

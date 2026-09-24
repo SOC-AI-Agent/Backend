@@ -198,6 +198,28 @@ under five alerts are printed as candidates but not emitted as rules unless
 
 `samples/mockup.json` holds recovered ES notables to post at the API.
 
+## API docs (Swagger)
+
+`http://localhost:8081/docs` (also through the dashboard's nginx at `:3001/docs`); the OpenAPI document
+itself is `/docs-json`. **Authorize** takes either credential — an API key for `X-API-Key`, or the
+`access_token` from `POST /auth/login` for Bearer — and every operation shows which one it needs, so
+Try it out sends it. The token survives a page reload.
+
+The document is generated from the code, so it stays true only if the code keeps saying it:
+
+- **Request and query DTOs** (`*.dto.ts`, `*.query.ts`) document themselves — the `@nestjs/swagger`
+  plugin in `nest-cli.json` reads their types and class-validator decorators, and turns a `/** comment */`
+  above a field into its description. It only runs under `nest build`, not a bare `tsc`.
+- **Responses** are classes in `*.response.ts`, named on the route with `@ApiOkResponse({ type: … })`.
+  A controller returns a plain object, so nothing infers them: change what a route returns, change its
+  response class. `JobDetailResponse` is the one that matters most — it is where `lookup_result` and
+  `final_analysis` are described.
+- **Credentials** are `@ApiApiKeyAuth()`, `@ApiJwtAuth()` and `@ApiRoleAuth(...roles)` from
+  `common/decorators/api-docs.decorator.ts`. They have to match the guard on the route.
+- Every operation needs an `@ApiOperation({ summary })`.
+
+`tests/test_openapi.py` checks all of that against the running API, with no key.
+
 ## Tests
 
 `tests/` is a pytest suite for the running API. It replaces the hand-run
