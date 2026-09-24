@@ -85,11 +85,10 @@ write_env LLM-Server
 # The LLM server reaches the connectors itself, so it carries the same tokens.
 # Rewritten rather than left to .env.example, which has them blank.
 if [ -f "$REPOS/LLM-Server/.env" ]; then
-  python3 - "$REPOS/LLM-Server/.env" "$MCP_TOKEN" "$THREATQ_TOKEN" "$CONFLUENCE_TOKEN" <<'PY'
+  python3 - "$REPOS/LLM-Server/.env" "$THREATQ_TOKEN" "$CONFLUENCE_TOKEN" <<'PY'
 import json, re, sys
-path, mcp, tq, cf = sys.argv[1:5]
+path, tq, cf = sys.argv[1:4]
 servers = json.dumps([
-    {"name": "splunk",     "url": "http://soc-mcp-splunk:8200/mcp",     "token": mcp},
     {"name": "threatq",    "url": "http://soc-mcp-threatq:8300/mcp",    "token": tq},
     {"name": "confluence", "url": "http://soc-mcp-confluence:8600/mcp", "token": cf},
 ], separators=(",", ":"))
@@ -97,7 +96,7 @@ s = open(path).read()
 s = re.sub(r"^MCP_SERVERS=.*$", "MCP_SERVERS=" + servers, s, flags=re.M)
 open(path, "w").write(s)
 PY
-  echo "  LLM-Server: MCP_SERVERS points at all three connectors"
+  echo "  LLM-Server: MCP_SERVERS points at the ThreatQ and Confluence connectors (Splunk is plain HTTP)"
 fi
 
 cat <<EOF

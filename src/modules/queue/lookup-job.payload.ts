@@ -33,10 +33,10 @@ export interface LookupAnswer {
   sourcetype?: string;
   fields?: string[];
   /**
-   * Who actually ran it: 'backend' for a planned search sent straight to the
-   * connector, 'agent' when the query agent had to work it out. Worth recording
-   * — the two differ by three orders of magnitude in cost, and a run that
-   * quietly fell back to the agent is the one to look at.
+   * Who ran it. Always 'backend' now: a planned search is sent straight to the
+   * connector and a requirement with no plan is not searched. 'agent' is what
+   * jobs stored before the query agent was removed still carry, so it stays in
+   * the type and the dashboard still reads it.
    */
   ranBy?: 'backend' | 'agent';
   /**

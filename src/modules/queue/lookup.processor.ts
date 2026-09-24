@@ -1,11 +1,9 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { LookupStatus, Prisma } from '@prisma/client';
 import { Job } from 'bullmq';
 
 import { PrismaService } from '../../prisma/prisma.service';
-import { AiService } from '../ai/ai.service';
 import { AuditService } from '../audit/audit.service';
 import { CatalogService } from '../enrichment/catalog.service';
 import { SplunkService } from '../enrichment/splunk.service';
@@ -40,11 +38,15 @@ interface PlannedLookup {
 /**
  * Stage 2: run the requirements stage 1 wrote down.
  *
- * Each one goes to the query agent on its own — that agent holds the schema and
- * turns a plain-language requirement into the right search, which is the split
- * the whole two-agent design exists for. They run one after another rather than
- * together: the model server loads one model at a time, so firing five at once
- * would queue inside Ollama instead of here, where the progress is visible.
+ * Each one already carries its plan — the indicator, the fields that hold it in
+ * this estate, the index and sourcetype — resolved from the data catalogue before
+ * any model ran, so each is sent straight to the Splunk connector. No model is
+ * involved. They run one after another rather than together so the load on Splunk
+ * stays small and the progress is visible.
+ *
+ * A requirement that has no plan is not searched. It used to be handed to a query
+ * agent to work out; it is now kept, with the reason, for a person to run. Silently
+ * doing nothing would read as "nothing found", which is the wrong answer.
  *
  * A requirement that fails does not fail the lookup. Four answers and one error
  * is more use to an analyst than nothing at all, and the error is kept beside
@@ -58,9 +60,7 @@ export class LookupProcessor extends WorkerHost {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly ai: AiService,
     private readonly audit: AuditService,
-    private readonly config: ConfigService,
     private readonly catalog: CatalogService,
     private readonly splunk: SplunkService,
   ) {
@@ -102,7 +102,6 @@ export class LookupProcessor extends WorkerHost {
       extraData: { stage: 'splunk_lookup', requirements: requirements.length },
     });
 
-    const agent = this.config.get<string>('lookup.agent');
     const answers: LookupAnswer[] = [];
 
     // Each answer is persisted as it arrives rather than all of them at the
@@ -154,7 +153,7 @@ export class LookupProcessor extends WorkerHost {
 
       try {
         // A plan with an indicator and the fields that carry it is already the
-        // search. Running it through the query agent so it can emit those same
+        // search. Handing it to a query agent so it could emit those same
         // parameters back as JSON measured 488s, of which Splunk used 0.409 —
         // the model contributed the transcription and nothing else.
         const planned = Boolean(
@@ -213,7 +212,24 @@ export class LookupProcessor extends WorkerHost {
           spl = found.spl;
           count = found.count;
         } else {
-          result = await this.ai.generate(this.ask(plan), { agent });
+          // Nothing here can be turned into a search: no indicator with a field
+          // that carries it, no index to summarise, not a frequency check. Say so
+          // instead of guessing — the requirement is kept, and so is the reason.
+          answers.push({
+            requirement: plan.requirement,
+            answer:
+              'Not searched. The backend could not turn this requirement into a search — ' +
+              'it names no indicator the data catalogue has a field for, and no index to ' +
+              'summarise. Run it in Splunk by hand. This is not evidence that nothing ' +
+              'happened.',
+            runId: null,
+            durationMs: 0,
+            error: null,
+            ranBy: 'backend',
+            ...where,
+          });
+          await save();
+          continue;
         }
 
         answers.push({
@@ -222,7 +238,7 @@ export class LookupProcessor extends WorkerHost {
           runId: result.run_id ?? null,
           durationMs: Date.now() - each,
           error: null,
-          ranBy: planned ? 'backend' : 'agent',
+          ranBy: 'backend',
           spl,
           count,
           ...where,
@@ -238,10 +254,7 @@ export class LookupProcessor extends WorkerHost {
           runId: null,
           durationMs: Date.now() - each,
           error: message,
-          ranBy:
-            plan.frequencyOf || plan.summarise || plan.filters || plan.fields?.length
-              ? 'backend'
-              : 'agent',
+          ranBy: 'backend',
           ...where,
         });
       }
@@ -280,37 +293,5 @@ export class LookupProcessor extends WorkerHost {
     this.logger.log(
       `Lookup for ${jobId}: ${answers.length - failed}/${answers.length} answered in ${(elapsedMs / 1000).toFixed(1)}s`,
     );
-  }
-
-  /**
-   * The requirement, plus where the catalogue says to look.
-   *
-   * The query agent still chooses the tool and builds the search — that is what
-   * it knows how to do. What it no longer has to do is work out which of a
-   * hundred field names carries a source IP in this sourcetype, because that
-   * was resolved from the catalogue before any of this ran.
-   */
-  private ask(plan: PlannedLookup): string {
-    const lines = [plan.requirement];
-    const where: string[] = [];
-    if (plan.index) where.push(`index ${plan.index}`);
-    if (plan.sourcetype) where.push(`sourcetype ${plan.sourcetype}`);
-    if (where.length > 0) lines.push('', `Look in ${where.join(', ')}.`);
-
-    if (plan.fields?.length && plan.indicator) {
-      lines.push(
-        `In this data a ${plan.indicatorType} is carried by ${plan.fields.join(' or ')}. ` +
-          `Search those for ${plan.indicator} — do not substitute a CIM name.`,
-      );
-    } else if (plan.indicatorType) {
-      // Said out loud rather than left implicit: if this comes back empty, the
-      // reason may be the field rather than the data.
-      lines.push(
-        '',
-        `The catalogue names no field for a ${plan.indicatorType} here. Find one before ` +
-          'concluding anything from an empty result.',
-      );
-    }
-    return lines.join('\n');
   }
 }

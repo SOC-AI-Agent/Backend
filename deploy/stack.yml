@@ -113,9 +113,7 @@ services:
     build: ${REPOS:-..}/MCP-Server/Splunk
     container_name: soc-mcp-splunk
     env_file: ["${REPOS:-..}/MCP-Server/.env"]
-    volumes:
-      - ${REPOS:-..}/MCP-Server/Splunk/catalog:/catalog:ro
-      - ${REPOS:-..}/MCP-Server/certs:/certs:ro
+    volumes: ["${REPOS:-..}/MCP-Server/certs:/certs:ro"]
     restart: unless-stopped
     networks: [soc-network]
 

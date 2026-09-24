@@ -98,19 +98,13 @@ export default () => ({
      * 'manual' | 'auto' — when the Splunk stage runs.
      *
      * manual keeps the requirements on the job row and waits for someone to
-     * press the button. Each requirement costs a full agent run, and on a box
-     * without a GPU that is minutes; making it deliberate means that time is
-     * spent on alerts a person actually wants it spent on.
+     * press the button. Each requirement is a search against a production Splunk;
+     * making it deliberate means that load is spent on alerts a person actually
+     * wants it spent on.
      */
     mode: (process.env.SPLUNK_LOOKUP_MODE ?? 'manual').toLowerCase() === 'auto'
       ? 'auto'
       : 'manual',
-    /**
-     * Which agent handles a requirement the backend could not plan. A planned
-     * one never reaches it: the connector is called directly, which is the
-     * difference between 0.4 seconds and eight minutes.
-     */
-    agent: process.env.SPLUNK_LOOKUP_AGENT ?? 'splunk-query',
     /** A cap on how many of stage 1's requirements are actually run. */
     maxRequirements: toInt(process.env.SPLUNK_LOOKUP_MAX_REQUIREMENTS, 5),
   },
