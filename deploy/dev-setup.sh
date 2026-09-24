@@ -39,7 +39,6 @@ THREATQ_TOKEN="$(gen)"
 CONFLUENCE_TOKEN="$(gen)"
 JWT_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
 PG_PASSWORD="$(gen)"
-ADMIN_PASSWORD="$(openssl rand -base64 18 | tr -d '\n=')"
 
 # Reads .env.example and replaces any key that exists in the environment.
 # Not sed: a generated secret containing | or / breaks the expression, and one
@@ -72,7 +71,6 @@ THREATQ_MCP_AUTH_TOKEN="$THREATQ_TOKEN" \
 CONFLUENCE_MCP_AUTH_TOKEN="$CONFLUENCE_TOKEN" \
 JWT_SECRET_KEY="$JWT_SECRET" \
 POSTGRES_PASSWORD="$PG_PASSWORD" \
-DEFAULT_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
 SPLUNK_LOOKUP_MODE="manual" \
   write_env Backend
 
@@ -108,8 +106,8 @@ Done. Bring the stack up with:
 
   docker compose -f deploy/dev.yml up -d --build
 
-Admin login: admin / $ADMIN_PASSWORD
-(stored in Backend/.env — it is not printed again)
+The seed creates roles only. Create the first admin by hand — see
+Backend/docs/setup.md, section 4.
 
 Not running, and why
 --------------------

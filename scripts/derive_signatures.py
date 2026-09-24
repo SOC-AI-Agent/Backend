@@ -40,7 +40,7 @@ SMALL_GROUP = 5
 
 # An alert carrying any of these already says where it came from.
 PLACED_BY = ("orig_security_domain", "orig_sourcetype", "data_model", "orig_index")
-ES_DOMAINS = {"access", "endpoint", "network", "threat", "identity", "audit", "cloud"}
+DEFAULT_DOMAINS = {"access", "endpoint", "network", "threat", "identity", "audit", "cloud"}
 
 # Present in nearly every log, so useless for telling families apart. A
 # signature built on these matches everything, which is the same as matching
@@ -57,12 +57,30 @@ def fields_of(alert: dict) -> set:
     return {k.lower() for k in alert if not isinstance(alert[k], (dict, list))}
 
 
-def already_placed(alert: dict) -> str | None:
+def already_placed(alert: dict, domains: set[str], allow_search_name: bool) -> str | None:
     for key in PLACED_BY:
         if alert.get(key):
             return key
+    if not allow_search_name:
+        return None
     prefix = str(alert.get("search_name", "")).split(" - ")[0].strip().lower()
-    return "search_name prefix" if prefix in ES_DOMAINS else None
+    return "search_name prefix" if prefix in domains else None
+
+
+def load_domains(path: str | None) -> set[str]:
+    if not path:
+        return DEFAULT_DOMAINS
+    raw = json.loads(Path(path).read_text())
+    if isinstance(raw, list):
+        domains = raw
+    elif isinstance(raw, dict):
+        domains = raw.keys()
+    else:
+        raise ValueError("domains file must contain a JSON array or object")
+    result = {str(domain).strip().lower() for domain in domains if str(domain).strip()}
+    if not result:
+        raise ValueError("domains file must contain at least one domain")
+    return result
 
 
 def jaccard(a: set, b: set) -> float:
@@ -98,7 +116,24 @@ def main() -> int:
                     help="fields per signature (default 3)")
     ap.add_argument("--keep-common", action="store_true",
                     help="allow ubiquitous fields in a signature")
+    ap.add_argument("--domains", help="JSON array/object of approved search_name prefixes")
+    ap.add_argument("--allow-search-name-prefix", action="store_true",
+                    help="treat an approved search_name prefix as placed; off by default")
+    ap.add_argument("--min-group-size", type=int, default=SMALL_GROUP,
+                    help=f"do not emit rules for smaller groups (default {SMALL_GROUP})")
     args = ap.parse_args()
+
+    if args.similarity < 0 or args.similarity > 1:
+        ap.error("--similarity must be between 0 and 1")
+    if args.max_fields < 1:
+        ap.error("--max-fields must be at least 1")
+    if args.min_group_size < 0:
+        ap.error("--min-group-size cannot be negative")
+
+    try:
+        domains = load_domains(args.domains)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        ap.error(f"invalid --domains file: {exc}")
 
     raw = Path(args.alerts).read_text() if args.alerts else sys.stdin.read()
     alerts = json.loads(raw)
@@ -106,8 +141,11 @@ def main() -> int:
         alerts = [alerts]
 
     placed, unplaced = [], []
+    if not isinstance(alerts, list) or not all(isinstance(alert, dict) for alert in alerts):
+        ap.error("input must be a JSON object or an array of JSON objects")
+
     for a in alerts:
-        by = already_placed(a)
+        by = already_placed(a, domains, args.allow_search_name_prefix)
         (placed if by else unplaced).append((a, by))
 
     print(f"{len(alerts)} alerts: {len(placed)} already say where they came from, "
@@ -158,7 +196,7 @@ def main() -> int:
               f"{' …' if len(unique) > 12 else ''}", file=sys.stderr)
         print(f"  suggested:    {' + '.join(chosen)}", file=sys.stderr)
 
-        if len(group) < SMALL_GROUP:
+        if len(group) < args.min_group_size:
             # With a handful of near-identical alerts there is no way to tell a
             # field that every record of the family carries from one that only
             # this kind of event does. AWS CloudTrail is the example: an
@@ -172,6 +210,10 @@ def main() -> int:
                   file=sys.stderr)
             print("    the family carries, not ones specific to this event.",
                   file=sys.stderr)
+            print("    no rule emitted; pass --min-group-size 0 to include it anyway.",
+                file=sys.stderr)
+            print(file=sys.stderr)
+            continue
         print(file=sys.stderr)
         rules.append("+".join(chosen) + "=TODO_domain:TODO_sourcetype")
 

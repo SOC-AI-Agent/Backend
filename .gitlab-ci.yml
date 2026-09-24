@@ -108,7 +108,7 @@ deploy_production:
     # The address GitLab shows and links to. It is where the service actually
     # answers, so it comes from a variable — localhost here would be a link to
     # the runner, which is not where anyone reads this from.
-    url: ${BACKEND_URL}
+    url: '$BACKEND_URL'
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
   script:
@@ -137,9 +137,8 @@ deploy_production:
       fi
 
     - echo "========== 3. Seed =========="
-    # Creates the admin only if there is none. It refuses to run without
-    # DEFAULT_ADMIN_PASSWORD rather than falling back to one in the source,
-    # and it does not echo the password.
+    # Roles only. Production users are provisioned separately; no credential
+    # is created from the environment.
     - docker compose exec -T soc-core-api node dist/seed.js
 
     - echo "========== 4. Restart the worker =========="

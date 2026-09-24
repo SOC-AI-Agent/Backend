@@ -9,6 +9,7 @@ import { ApiKeysModule } from './modules/api-keys/api-keys.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { HealthModule } from './modules/health/health.module';
+import { InternalModule } from './modules/internal/internal.module';
 import { MaintenanceModule } from './modules/maintenance/maintenance.module';
 import { QueueModule } from './modules/queue/queue.module';
 import { StatsModule } from './modules/stats/stats.module';
@@ -27,6 +28,7 @@ import { UsersModule } from './modules/users/users.module';
     ApiKeysModule,
     StatsModule,
     HealthModule,
+    InternalModule,
     MaintenanceModule,
   ],
 })

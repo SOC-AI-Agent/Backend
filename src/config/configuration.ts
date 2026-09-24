@@ -27,10 +27,13 @@ export default () => ({
     debug: toBool(process.env.DEBUG),
     port: toInt(process.env.PORT, 8000),
     role: (process.env.APP_ROLE ?? 'api') as 'api' | 'worker',
-    allowedOrigins: (process.env.ALLOWED_ORIGINS ?? 'http://localhost:3000')
+    allowedOrigins: (process.env.ALLOWED_ORIGINS ?? 'http://localhost:3001')
       .split(',')
       .map((o) => o.trim())
       .filter(Boolean),
+  },
+  diagnostics: {
+    schemaDebug: toBool(process.env.DB_SCHEMA_DEBUG),
   },
   jwt: {
     secret: process.env.JWT_SECRET_KEY ?? 'change-me-in-production-use-long-random-string',
@@ -47,7 +50,7 @@ export default () => ({
     /** Base URL of the Python AI service (../ai-service). */
     baseUrl: process.env.AI_SERVICE_URL ?? 'http://soc-ai:8100',
     /** Reported back to callers / stored on the job row. */
-    model: process.env.OLLAMA_MODEL ?? 'qwen2.5:7b',
+    model: process.env.OLLAMA_MODEL,
     /**
      * The agent behind the first answer: one call, no tools, producing the
      * suggestion and the list of what it would want from Splunk. Naming it
@@ -110,19 +113,6 @@ export default () => ({
     agent: process.env.SPLUNK_LOOKUP_AGENT ?? 'splunk-query',
     /** A cap on how many of stage 1's requirements are actually run. */
     maxRequirements: toInt(process.env.SPLUNK_LOOKUP_MAX_REQUIREMENTS, 5),
-  },
-  admin: {
-    username: process.env.DEFAULT_ADMIN_USERNAME ?? 'admin',
-    /**
-     * No default, on purpose.
-     *
-     * A fallback here is a password that ships in the source, and the seed only
-     * creates the admin once — so a deployment that never set this has an
-     * account whose password is public and no sign that anything is wrong.
-     * Empty means the seed refuses and says what to set.
-     */
-    password: process.env.DEFAULT_ADMIN_PASSWORD ?? '',
-    email: process.env.DEFAULT_ADMIN_EMAIL ?? 'admin@soc.local',
   },
   retention: {
     jobsDays: toInt(process.env.RETENTION_DAYS_JOBS, 30),
