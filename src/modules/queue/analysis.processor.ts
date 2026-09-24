@@ -6,7 +6,8 @@ import { Job, Queue } from 'bullmq';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { AiService } from '../ai/ai.service';
-import { parseReply } from '../ai/requirements';
+import { buildRequirementsPrompt } from '../ai/conclusion';
+import { ModelRequirement, parseRequirements, parseSuggestion } from '../ai/requirements';
 import { CatalogService } from '../enrichment/catalog.service';
 import { EnrichmentService } from '../enrichment/enrichment.service';
 import { AuditService } from '../audit/audit.service';
@@ -16,9 +17,9 @@ import { LOOKUP_QUEUE, RUN_LOOKUP_JOB, SplunkLookupPayload } from './lookup-job.
 /**
  * Runs only in the worker process (APP_ROLE=worker).
  *
- * Stage 1, and only stage 1: PROCESSING -> enrich -> one call to an agent with
- * no tools -> persist -> COMPLETED, writing an audit entry at every transition.
- * The AI service never touches the database.
+ * Stage 1, and only stage 1: PROCESSING -> enrich -> the suggestion agent, then the
+ * requirements agent (neither has tools) -> persist -> COMPLETED, writing an audit
+ * entry at every transition. The AI service never touches the database.
  *
  * Searching Splunk is stage 2 and lives in its own queue. That is deliberate:
  * a lookup is minutes of inference per requirement, and on one worker it would
@@ -86,6 +87,8 @@ export class AnalysisProcessor extends WorkerHost {
       extraData: { alert_id: alertId, alert_name: alertName },
     });
 
+    // The suggestion. Without it there is nothing to show, so it is the one call
+    // in this stage whose failure fails the job.
     let result: Awaited<ReturnType<AiService['generate']>>;
     try {
       result = await this.ai.generate(rendered, { agent: this.config.get<string>('ai.suggestAgent') });
@@ -112,9 +115,9 @@ export class AnalysisProcessor extends WorkerHost {
       return;
     }
 
-    const elapsedMs = Date.now() - startedAt;
+    const suggestion = parseSuggestion(result.response);
 
-    // The model decides what is worth knowing; the catalogue decides where to
+    // The requirements agent decides what is worth knowing; the catalogue decides where to
     // look. Each requirement it wrote names a value the extractor already
     // found, which gives the type without parsing English, and the type plus
     // the alert's own index and sourcetype give the fields. Nothing about the
@@ -131,16 +134,26 @@ export class AnalysisProcessor extends WorkerHost {
         type: s.type, value: s.value, source: 'skipped for intel, still searchable',
       })).filter((s: any) => s.type),
     ];
-    const parsed = parseReply(result.response, known, maxRequirements);
 
-    if (parsed.malformed) {
+    // A second call, to a second agent, that reads the suggestion as well as the
+    // alert. Its failure costs the model-chosen part of the plan, not the job: the
+    // suggestion is already in hand and the derived plan below is the floor.
+    let requirementsRun: Awaited<ReturnType<AiService['generate']>> | null = null;
+    let asked: ReturnType<AnalysisProcessor['aim']> = [];
+    try {
+      requirementsRun = await this.ai.generate(
+        buildRequirementsPrompt(rendered, suggestion.suggestion),
+        { agent: this.config.get<string>('ai.requirementsAgent') },
+      );
+      asked = this.aim(parseRequirements(requirementsRun.response, known, maxRequirements), enrichment);
+    } catch (err: any) {
       this.logger.warn(
-        `Job ${jobId}: the model did not answer in the two sections it was asked for — ` +
-          'the reply is kept whole and the derived plan is used instead',
+        `Job ${jobId}: the requirements agent failed (${err?.message ?? err}) — ` +
+          'the suggestion is kept and the derived plan is used instead',
       );
     }
 
-    const asked = this.aim(parsed.requirements, enrichment);
+    const elapsedMs = Date.now() - startedAt;
     // No usable question from the model is not the same as no question. The
     // derived plan — what follows mechanically from the indicators — is the
     // floor, so a bad generation costs quality rather than the whole stage.
@@ -176,12 +189,19 @@ export class AnalysisProcessor extends WorkerHost {
       where: { jobId },
       data: {
         status: JobStatus.COMPLETED,
-        aiResponse: parsed.suggestion,
+        aiResponse: suggestion.suggestion,
         splunkRequirements: finalPlan as unknown as Prisma.InputJsonValue,
+        // The run behind the requirements is kept beside the evidence rather than
+        // in a column of its own: it is a pointer for reading the trace, not
+        // something the pipeline branches on.
+        evidence: {
+          ...enrichment,
+          requirements_run_id: requirementsRun?.run_id ?? null,
+        } as unknown as Prisma.InputJsonValue,
         modelUsed: result.model,
         processingTimeMs: elapsedMs,
-        tokensPrompt: result.tokens_prompt,
-        tokensEval: result.tokens_eval,
+        tokensPrompt: result.tokens_prompt + (requirementsRun?.tokens_prompt ?? 0),
+        tokensEval: result.tokens_eval + (requirementsRun?.tokens_eval ?? 0),
         // The LLM server keeps the trace, not us — this is the only link back
         // to what the analysing agent asked the query agent for. Without it the
         // evidence page can show the inputs but not the reasoning in between.
@@ -204,7 +224,7 @@ export class AnalysisProcessor extends WorkerHost {
         alert_id: alertId,
         alert_name: alertName,
         model: result.model,
-        ai_service_ms: result.total_duration_ms,
+        ai_service_ms: result.total_duration_ms + (requirementsRun?.total_duration_ms ?? 0),
         requirements: finalPlan.length,
       },
     });
@@ -219,7 +239,7 @@ export class AnalysisProcessor extends WorkerHost {
    * approves. Everything after the question mark is the catalogue's: which
    * index, which sourcetype, which field names carry this kind of value here.
    */
-  private aim(requirements: ReturnType<typeof parseReply>['requirements'], enrichment: any) {
+  private aim(requirements: ModelRequirement[], enrichment: any) {
     const source = enrichment.source;
     return requirements.map((r) => {
       if (!r.indicator || !r.indicatorType) {

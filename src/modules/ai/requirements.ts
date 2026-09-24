@@ -1,8 +1,8 @@
 /**
  * Turning what the model asked for into something that can actually be run.
  *
- * The model decides what is worth knowing — that is judgement, and it is the
- * part of this pipeline a model is for. It does not decide where to look: which
+ * The requirements agent decides what is worth knowing — that is judgement, and
+ * it is the part of this pipeline a model is for. It does not decide where to look: which
  * index, which sourcetype, which of a hundred field names carries a source IP
  * here. That has one right answer, the catalogue holds it, and a 7B model
  * guessing at it was the original bug.
@@ -31,45 +31,54 @@ export interface ModelRequirement {
   unmatched?: string;
 }
 
-const NEEDED_HEADER = /^[^\n]*needed\s+from\s+splunk[^\n]*$/im;
 const SUGGESTION_HEADER = /^[^\n]*={2,}\s*suggestion\s*={2,}[^\n]*$/im;
+// Tolerated, no longer asked for: the requirements agent used to share a reply
+// with the suggestion, under this header.
+const NEEDED_HEADER = /^[^\n]*needed\s+from\s+splunk[^\n]*$/im;
 const BULLET = /^\s*(?:[-*•]|\d+[.)])\s+/;
 const NOTHING = /^(?:none|n\/?a|nothing(?:\s+further)?|no(?:ne)?\s+needed)\.?$/i;
 
-export interface ParsedReply {
+export interface ParsedSuggestion {
   suggestion: string;
-  requirements: ModelRequirement[];
-  /** The model did not answer in the shape it was asked for. */
+  /** The agent said nothing. */
   malformed: boolean;
 }
 
 /**
- * Split the reply, and bind each requirement to an extracted value.
+ * The suggestion agent's reply, as the analyst reads it.
  *
- * Forgiving about shape on purpose. A 7B model asked for two headed sections
- * mostly obliges, but it also writes `**== SUGGESTION ==**`, numbers the
- * bullets, and appends `- none` after four real lines because the instruction
- * to write `none` when there is nothing was the last thing it read. None of
- * that should cost the analyst the answer.
+ * The reply is kept whole. A 7B model asked for three headed parts mostly
+ * obliges, but it also writes `**== SUGGESTION ==**` above them from habit, and
+ * losing or mangling the answer over a header would be the worse failure. So the
+ * only thing removed is that header.
  */
-export function parseReply(
+export function parseSuggestion(reply: string): ParsedSuggestion {
+  const text = (reply ?? '').trim();
+  if (!text) return { suggestion: '', malformed: true };
+
+  const header = SUGGESTION_HEADER.exec(text);
+  const body = header ? text.slice(header.index + header[0].length).trim() : text;
+  return { suggestion: body || text, malformed: false };
+}
+
+/**
+ * The requirements agent's reply, with each line bound to an extracted value.
+ *
+ * Forgiving about shape on purpose. The model numbers the bullets, writes a
+ * header nobody asked for, and appends `- none` after four real lines because the
+ * instruction to write `none` when there is nothing was the last thing it read.
+ * None of that should cost the analyst the list.
+ */
+export function parseRequirements(
   reply: string,
   known: KnownIndicator[],
   limit = 5,
-): ParsedReply {
+): ModelRequirement[] {
   const text = (reply ?? '').trim();
-  if (!text) return { suggestion: '', requirements: [], malformed: true };
+  if (!text) return [];
 
-  const split = NEEDED_HEADER.exec(text);
-  if (!split) {
-    // The reply is still the analyst's answer, so it is kept whole. Losing it
-    // to a formatting miss would be the worse failure.
-    return { suggestion: text, requirements: [], malformed: true };
-  }
-
-  let suggestion = text.slice(0, split.index).trim();
-  const header = SUGGESTION_HEADER.exec(suggestion);
-  if (header) suggestion = suggestion.slice(header.index + header[0].length).trim();
+  const header = NEEDED_HEADER.exec(text);
+  const body = header ? text.slice(header.index + header[0].length) : text;
 
   // Longest first, so "10.1.100.44" is preferred over a shorter value that
   // happens to be a substring of it.
@@ -78,7 +87,7 @@ export function parseReply(
   const requirements: ModelRequirement[] = [];
   const seen = new Set<string>();
 
-  for (const line of text.slice(split.index + split[0].length).split('\n')) {
+  for (const line of body.split('\n')) {
     const bullet = BULLET.exec(line);
     if (!bullet) continue;
     const item = line.slice(bullet[0].length).trim().replace(/[.;]+$/, '');
@@ -101,5 +110,5 @@ export function parseReply(
     if (requirements.length >= limit) break;
   }
 
-  return { suggestion: suggestion || text, requirements, malformed: !suggestion };
+  return requirements;
 }

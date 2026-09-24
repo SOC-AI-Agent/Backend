@@ -1,16 +1,21 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { LookupStatus, Prisma } from '@prisma/client';
 import { Job } from 'bullmq';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { AiService } from '../ai/ai.service';
+import { buildConclusionPrompt, parseConclusion } from '../ai/conclusion';
 import { AuditService } from '../audit/audit.service';
 import { CatalogService } from '../enrichment/catalog.service';
 import { SplunkService } from '../enrichment/splunk.service';
 import {
+  FinalAnalysis,
   LOOKUP_QUEUE,
   LookupAnswer,
   SplunkLookupPayload,
+  StoredLookup,
 } from './lookup-job.payload';
 
 /** The shape stage 1 stored: a question plus where in Splunk to ask it. */
@@ -48,6 +53,12 @@ interface PlannedLookup {
  * agent to work out; it is now kept, with the reason, for a person to run. Silently
  * doing nothing would read as "nothing found", which is the wrong answer.
  *
+ * Then, once the searches are in, a third agent reads them beside the suggestion
+ * and writes the second reading (see FinalAnalysis). It has no tools, its failure
+ * does not fail the lookup — the answers are already saved and are worth having on
+ * their own — and the lookup stays RUNNING until it finishes, so a worker that dies
+ * mid-analysis is cleaned up by the same recovery as one that dies mid-search.
+ *
  * A requirement that fails does not fail the lookup. Four answers and one error
  * is more use to an analyst than nothing at all, and the error is kept beside
  * the others rather than thrown away.
@@ -60,6 +71,8 @@ export class LookupProcessor extends WorkerHost {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly ai: AiService,
+    private readonly config: ConfigService,
     private readonly audit: AuditService,
     private readonly catalog: CatalogService,
     private readonly splunk: SplunkService,
@@ -109,10 +122,12 @@ export class LookupProcessor extends WorkerHost {
     // requirement and a page showing nothing for ten minutes looks broken, and
     // when the worker died mid-run the answers it had already paid for died
     // with it.
+    let analysis: FinalAnalysis | undefined;
+    const stored = (): StoredLookup => ({ answers, ...(analysis ? { analysis } : {}) });
     const save = async () => {
       await this.prisma.aiJob.update({
         where: { jobId },
-        data: { lookupResult: answers as unknown as Prisma.InputJsonValue },
+        data: { lookupResult: stored() as unknown as Prisma.InputJsonValue },
       });
     };
 
@@ -261,16 +276,44 @@ export class LookupProcessor extends WorkerHost {
       await save();
     }
 
-    const elapsedMs = Date.now() - startedAt;
+    const searchMs = Date.now() - startedAt;
     const failed = answers.filter((a) => a.error).length;
+
+    // Third agent, after the searches. Skipped, with the reason written down, when
+    // nothing was searched: an analysis with no results would only restate the
+    // suggestion, and one that hears only about gaps has nothing to add.
+    if (this.config.get<boolean>('lookup.analyse')) {
+      const searched = answers.filter((a) => !a.error && a.spl);
+      if (searched.length === 0) {
+        analysis = {
+          status: 'skipped',
+          reason:
+            'No search ran, so there is nothing new to analyse. Every requirement was either ' +
+            'not searched or failed — see the answers above.',
+        };
+      } else if (!record.aiResponse || !record.renderedPrompt) {
+        analysis = { status: 'skipped', reason: 'The first reading was not stored, so there is nothing to compare against.' };
+      } else {
+        analysis = {
+          status: 'running',
+          startedAt: new Date().toISOString(),
+          resultsUsed: answers.length,
+        };
+        await save();
+        analysis = await this.conclude(jobId, record.renderedPrompt, record.aiResponse, answers, analysis);
+      }
+    }
+
+    const elapsedMs = Date.now() - startedAt;
 
     await this.prisma.aiJob.update({
       where: { jobId },
       data: {
         // Every requirement failing is a failure; some failing is a result with
-        // gaps, and the gaps are visible in the answers themselves.
+        // gaps, and the gaps are visible in the answers themselves. The analysis
+        // failing is neither: the searches worked.
         lookupStatus: failed === answers.length ? LookupStatus.FAILED : LookupStatus.COMPLETED,
-        lookupResult: answers as unknown as Prisma.InputJsonValue,
+        lookupResult: stored() as unknown as Prisma.InputJsonValue,
         lookupError: failed === answers.length ? answers[0]?.error ?? 'every requirement failed' : null,
         lookupTimeMs: elapsedMs,
         lookupCompletedAt: new Date(),
@@ -287,11 +330,46 @@ export class LookupProcessor extends WorkerHost {
         stage: 'splunk_lookup',
         answered: answers.length - failed,
         failed,
+        analysis: analysis?.status ?? 'off',
+        search_ms: searchMs,
       },
     });
 
     this.logger.log(
-      `Lookup for ${jobId}: ${answers.length - failed}/${answers.length} answered in ${(elapsedMs / 1000).toFixed(1)}s`,
+      `Lookup for ${jobId}: ${answers.length - failed}/${answers.length} answered in ` +
+        `${(searchMs / 1000).toFixed(1)}s` +
+        (analysis ? `, analysis ${analysis.status} (${((elapsedMs - searchMs) / 1000).toFixed(1)}s)` : ''),
     );
+  }
+
+  /**
+   * The second reading: the alert, the first reading and the numbered results, to
+   * an agent with no tools. Never throws — a failed analysis is recorded on the
+   * job, next to the answers it could not read.
+   */
+  private async conclude(
+    jobId: string,
+    rendered: string,
+    suggestion: string,
+    answers: LookupAnswer[],
+    running: FinalAnalysis,
+  ): Promise<FinalAnalysis> {
+    const began = Date.now();
+    const done = () => ({ durationMs: Date.now() - began, completedAt: new Date().toISOString() });
+
+    try {
+      const run = await this.ai.generate(buildConclusionPrompt(rendered, suggestion, answers), {
+        agent: this.config.get<string>('ai.concludeAgent'),
+      });
+      const text = parseConclusion(run.response);
+      if (!text) {
+        return { ...running, ...done(), status: 'failed', error: 'the agent returned nothing' };
+      }
+      return { ...running, ...done(), status: 'completed', text, model: run.model, runId: run.run_id ?? null };
+    } catch (err: any) {
+      const message = err?.message ?? String(err);
+      this.logger.warn(`Lookup for ${jobId}: the analysis failed — the answers are kept: ${message}`);
+      return { ...running, ...done(), status: 'failed', error: message };
+    }
   }
 }

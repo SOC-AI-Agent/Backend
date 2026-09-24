@@ -16,6 +16,7 @@ import {
   RUN_LOOKUP_JOB,
   SplunkLookupPayload,
 } from '../queue/lookup-job.payload';
+import { splitLookup } from '../queue/lookup-job.payload';
 import { AnalyzeDto, ListResultsQuery } from './dto/analysis.dto';
 
 @Injectable()
@@ -219,8 +220,28 @@ export function toJobResponse(job: AiJob, withEvidence = false) {
           evidence: (job as { evidence?: unknown }).evidence ?? null,
           // The answers themselves are only on the detail: each is a paragraph
           // of search output, which a list has no use for.
-          lookup_result: (job as { lookupResult?: unknown }).lookupResult ?? null,
+          // Still an array of answers, as it was before the analysis existed, so
+          // nothing that reads it changes; jobs stored either way come out alike.
+          lookup_result: splitLookup((job as { lookupResult?: unknown }).lookupResult).answers,
+          final_analysis: finalAnalysisOf(job),
         }
       : {}),
   };
+}
+
+/**
+ * The reading written after the searches, or null when there is none.
+ *
+ * A stored `running` is only true while the lookup is: the analysis is one of the
+ * things a lookup does, so a lookup that is no longer queued or running, with the
+ * analysis still marked running, is one a worker died in the middle of.
+ */
+function finalAnalysisOf(job: AiJob) {
+  const analysis = splitLookup((job as { lookupResult?: unknown }).lookupResult).analysis;
+  if (!analysis) return null;
+  const working = job.lookupStatus === LookupStatus.QUEUED || job.lookupStatus === LookupStatus.RUNNING;
+  if (analysis.status === 'running' && !working) {
+    return { ...analysis, status: 'failed', error: 'the worker stopped before the analysis finished' };
+  }
+  return analysis;
 }
