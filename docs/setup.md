@@ -100,21 +100,30 @@ user คนถัดไปสร้างผ่านหน้า Users ด้�
 
 ## 5. สร้าง agent
 
-Backend เรียก agent `soc-suggest` (ตั้งชื่อด้วย `LLM_SUGGEST_AGENT`) เพื่อเขียนคำแนะนำขั้นแรก
-**ถ้ายังไม่มี agent นั้น job จะ fail ทุกใบ**
+Backend เรียก agent 3 ตัว **ถ้าขาดตัวไหน job จะ fail หรือได้ผลไม่ครบ** ทั้งหมดไม่มี tool และไม่ต่อ MCP server ตัวไหน:
 
-agent นี้ไม่มี tool และไม่ต่อ MCP server ตัวไหน — อ่าน alert กับข้อมูลที่ Backend เตรียมไว้
-แล้วเขียนคำตอบ ส่วนการค้น Splunk Backend ทำเองหลังจากนั้น ไม่ผ่าน agent
+| agent | ตั้งชื่อด้วย | ทำอะไร |
+| --- | --- | --- |
+| `soc-suggest` | `LLM_SUGGEST_AGENT` | อ่าน alert + ข้อมูลที่ Backend เตรียมไว้ (ThreatQ, playbook) เขียน suggestion — ขาดตัวนี้ job fail |
+| `soc-requirements` | `LLM_REQUIREMENTS_AGENT` | อ่านเหมือนกันพร้อม suggestion แล้วเขียนว่าอยากถาม Splunk อะไร — ขาดหรือพัง: ใช้แผนที่ Backend ได้จากตัวโค้ดแทน |
+| `soc-conclude` | `LLM_CONCLUDE_AGENT` | หลังค้น Splunk เสร็จ อ่านผลค้นคู่กับ suggestion เขียนบทวิเคราะห์ — ขาดหรือพัง: ผลค้นยังอยู่ครบ ไม่มีบทวิเคราะห์ |
+
+การค้น Splunk เอง Backend เขียน SPL ส่งผ่าน connector ไม่ผ่าน agent
 
 สร้างจากไฟล์ที่ commit ไว้:
 
 ```bash
-curl -s -X POST localhost:8400/agents -H 'Content-Type: application/json' \
-  -d @../LLM-Server/agents/soc-suggest.json
+for a in soc-suggest soc-requirements soc-conclude; do
+  curl -s -X POST localhost:8400/agents -H 'Content-Type: application/json' \
+    -d @../LLM-Server/agents/$a.json
+done
 ```
 
-หรือเปิด `http://localhost:8400` → New agent แล้วกรอกตามไฟล์นั้น (Model เลือกจาก dropdown
+หรือเปิด `http://localhost:8400` → New agent แล้วกรอกตามไฟล์เหล่านั้น (Model เลือกจาก dropdown
 ซึ่งเห็นเฉพาะที่ pull ไว้จริง) — `LLM_DEFAULT_AGENT` (default `soc-suggest`) มีไว้สำหรับผู้เรียกที่ไม่ระบุชื่อ agent
+
+Backend ต้องตั้ง `SPLUNK_ALLOWED_INDEXES` ด้วย (ชุดเดียวกับ `MCP-Server/.env`) เพราะมันเป็นตัวเขียน SPL
+รายการว่าง = ปฏิเสธทุกการค้น
 
 ---
 

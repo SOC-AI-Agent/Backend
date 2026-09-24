@@ -2,8 +2,8 @@
 
 เอกสารนี้สำหรับตอนผลค้น Splunk ดูผิด แล้วต้องหาว่าผิดตรงไหน
 
-Splunk ไม่ผ่าน MCP และไม่ผ่าน model แล้ว — Backend วางแผนการค้นจาก catalogue
-แล้วยิง connector (`soc-mcp-splunk`) ตรงๆ ผ่าน HTTP ดังนั้นคำถามแรกคือ
+Splunk ไม่ผ่าน MCP และ model ไม่ได้เขียนการค้น — Backend วางแผนจาก catalogue เขียน SPL เอง
+แล้วยิง connector (`soc-mcp-splunk`) ผ่าน HTTP ดังนั้นคำถามแรกคือ
 **"connector คืนค่าตรงที่เราคิดไหม"** ซึ่งตอบได้โดยไม่ต้องใช้ model เลย
 
 ---
@@ -12,7 +12,7 @@ Splunk ไม่ผ่าน MCP และไม่ผ่าน model แล้�
 
 ```
 ชั้น 3   ขั้น Splunk ของ Backend   Backend วางแผน แล้วยิง connector  -> ตอบ "ทั้งระบบทำงานไหม"
-ชั้น 2   เรียก connector เอง       เราเลือก parameter เอง            -> ตอบ "route แปลงเป็น SPL ถูกไหม"
+ชั้น 2   เรียก connector เอง       เราส่ง SPL เอง                    -> ตอบ "connector รันถูกไหม"
 ชั้น 1   ยิง Splunk ตรงๆ           เราเขียน SPL เอง                  -> ตอบ "SPL ที่ถูกคืออะไร"
 ```
 
@@ -20,9 +20,9 @@ Splunk ไม่ผ่าน MCP และไม่ผ่าน model แล้�
 
 | อาการ | แปลว่า |
 | --- | --- |
-| ชั้น 1 ได้ข้อมูล, ชั้น 2 ไม่ได้ | route แปลง parameter เป็น SPL ผิด, index ไม่อยู่ใน allowlist, หรือ field ที่ส่งไปไม่ใช่ field ที่ข้อมูลใช้จริง |
-| ชั้น 2 ได้ข้อมูล, ชั้น 3 ไม่ได้ | Backend วางแผนผิด — ดู `index`, `sourcetype`, `fields` และ `spl` ใน `lookup_result` (ปัญหาอยู่ที่ catalogue หรือตารางคำถาม) |
-| ทั้งสามได้ข้อมูล แต่ analyst อ่านผิด | การ render คำตอบหรือ prompt ฝั่ง Backend ไม่ใช่ Splunk |
+| ชั้น 1 ได้ข้อมูล, ชั้น 2 ไม่ได้ | connector ปฏิเสธ SPL (ดู `error`), index ไม่อยู่ใน allowlist, หรือ field ที่ใช้ไม่ใช่ field ที่ข้อมูลใช้จริง |
+| ชั้น 2 ได้ข้อมูล, ชั้น 3 ไม่ได้ | Backend วางแผนหรือเขียน SPL ผิด — ดู `index`, `sourcetype`, `fields` และ `spl` ใน `lookup_result` (ปัญหาอยู่ที่ catalogue หรือตารางคำถาม) |
+| ทั้งสามได้ข้อมูล แต่ analyst อ่านผิด | การ render คำตอบ หรือ agent วิเคราะห์ (`soc-conclude`) — ไม่ใช่ Splunk |
 | ชั้น 1 ก็ไม่ได้ | SPL ผิด หรือไม่มีข้อมูลจริง |
 
 **ผลว่างไม่ได้แปลว่าไม่มีข้อมูล** — field ที่ส่งไปผิดชื่อก็ได้ผลว่างเหมือนกัน
@@ -65,65 +65,47 @@ curl -sk -u "$SPLUNK_ADMIN:$SPLUNK_PW" -X POST "$SPLUNK/services/search/jobs" \
 
 ## ชั้น 2 — เรียก connector เอง ไม่ใช้ Backend
 
-**ไม่มี route ไหนรับ SPL ดิบ** ทุก route สร้าง SPL เองจาก parameter ผ่าน
-[`spl.py`](../../MCP-Server/Splunk/spl.py) นี่คือ safety boundary ทั้งหมดของ connector
+Backend เขียน SPL เอง ([`spl.ts`](../src/modules/enrichment/spl.ts)) แล้วส่งไป `POST /query` ของ
+connector ซึ่ง **ตรวจซ้ำอีกรอบ** ([`check_query`](../../MCP-Server/Splunk/spl.py): อนุญาตเฉพาะ search ที่อ่านอย่างเดียว
+บน index ที่อยู่ใน allowlist) แล้วค่อยรัน ชั้นนี้คือการส่ง SPL เองเข้าไป
 
 connector ไม่ publish port ออกนอก จึงต้องยิงจากใน network:
 
 ```bash
 export MCP_AUTH_TOKEN='<ค่าใน MCP-Server/.env>'
 
-splunk() {   # splunk <path> '<json>'
+splunk() {   # splunk '<json>'
   docker run --rm --network soc-network curlimages/curl -s -X POST \
-    "http://soc-mcp-splunk:8200$1" \
+    http://soc-mcp-splunk:8200/query \
     -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
     -H 'Content-Type: application/json' \
-    -d "$2"
+    -d "$1"
 }
 ```
 
-**`/search` — indicator หนึ่งตัวใน field ที่เก็บมัน** (สิ่งที่ Backend ยิงจริง)
+**search แบบที่ Backend เขียน — indicator หนึ่งตัวใน field ที่เก็บมัน**
 
 ```bash
-splunk /search '{"indicator":"10.1.100.11","indicator_type":"ip",
-                 "fields":["srcip","dstip"],"index":"main"}' | python3 -m json.tool
+splunk '{"spl":"search index=\"main\" (srcip=\"10.1.100.11\" OR dstip=\"10.1.100.11\") | head 20"}'
+```
+```
+{"results":[ ... ],"count":20,"earliest":"-24h","latest":"now","limit":20}
 ```
 
-ได้ SPL ที่สร้างจริงกลับมาด้วย:
+ผลคือแถวที่ Splunk คืนมาตามเดิม ไม่ตัด ไม่แปลความ — connector ไม่รู้ว่า field ไหนแปลว่าอะไร
+(งานนั้นอยู่ที่ Backend) ใส่ `earliest`, `latest`, `count` ได้ (`count` ถูกจำกัดที่ `SPLUNK_MAX_COUNT`)
 
-```
-"spl": "search index=\"main\" (srcip=\"10.1.100.11\" OR dstip=\"10.1.100.11\") | head 20"
-```
+**ต่อ Splunk ได้ไหม** — `docker compose exec -T soc-mcp-splunk python check_connection.py`
+บอกว่าตกที่ขั้นไหน (`reach` / `auth` / `search`) ดู [Splunk/README.md](../../MCP-Server/Splunk/README.md)
 
-ผลมี `count`, `capped` (ถึงเพดานแล้วหรือยัง), `fields_searched`, `events[].matched_on`
-(event นี้ match ด้วย field ไหน — บอกว่าเป็นขาออกหรือขาเข้า) และ `spl`
-
-**`/summarise` — นับ/จัดกลุ่มแทนการลิสต์**
-
-```bash
-splunk /summarise '{"index":"main","filters":{"srcip":"10.1.100.11"},
-                    "group_by":["dstip"],"metrics":[{"fn":"count"}],"sort":"-count"}'
-```
-
-**`/frequency` — alert นี้ยิงบ่อยแค่ไหน**
-
-```bash
-splunk /frequency '{"alert_name":"<ชื่อ alert ตามที่ Splunk เก็บ>","days":7}'
-```
-
-`SPLUNK_ALERT_INDEX` (default `notable`) ต้องอยู่ใน `SPLUNK_ALLOWED_INDEXES` ด้วย ไม่งั้นได้ 400
-
-**`/catalog` — index/sourcetype/field ที่ token นี้เห็นจริง** (ใช้ตอนเขียน catalogue)
+**index/sourcetype/field ที่ token นี้เห็นจริง** (ใช้ตอนเขียน catalogue)
 
 ```bash
 docker run --rm --network soc-network curlimages/curl -s "http://soc-mcp-splunk:8200/catalog" \
   -H "Authorization: Bearer $MCP_AUTH_TOKEN"
 ```
 
-**ต่อ Splunk ได้ไหม** — `docker compose exec -T soc-mcp-splunk python check_connection.py`
-บอกว่าตกที่ขั้นไหน (`reach` / `auth` / `search`) ดู [Splunk/README.md](../../MCP-Server/Splunk/README.md)
-
-**อ่านสถานะจาก HTTP code:** `400` = request ของเราผิด (`error` บอกว่าค่าไหน),
+**อ่านสถานะจาก HTTP code:** `400` = connector ปฏิเสธ SPL หรือ parameter (`error` บอกว่าเพราะอะไร),
 `502` = Splunk มีปัญหา (`error` คือเหตุผลของ Splunk: ต่อไม่ได้ / token ถูกปฏิเสธ / ไม่มีสิทธิ์ค้น),
 `401` = token ของ connector ผิด
 
@@ -131,8 +113,10 @@ docker run --rm --network soc-network curlimages/curl -s "http://soc-mcp-splunk:
 
 ## ชั้น 3 — ขั้น Splunk ของ Backend
 
-ขั้นแรก (agent `soc-suggest`) เขียน requirement เก็บไว้ที่ job; ขั้นที่สองรันมันเมื่อ analyst กดปุ่ม
-(หรืออัตโนมัติถ้า `SPLUNK_LOOKUP_MODE=auto`) — ไม่มี agent ในขั้นนี้
+ขั้นแรกใช้ agent สองตัวต่อกัน (ไม่มีตัวไหนมี tool): `soc-suggest` เขียน suggestion แล้ว `soc-requirements`
+อ่าน suggestion กับ alert และเขียนว่าอยากถาม Splunk อะไร (ค่าละหนึ่งบรรทัด) จากนั้น Backend เอาแต่ละบรรทัดไป
+เทียบ catalogue เขียน SPL เอง ขั้นที่สองรันเมื่อ analyst กดปุ่ม (หรืออัตโนมัติถ้า `SPLUNK_LOOKUP_MODE=auto`)
+แล้ว agent ตัวที่สาม `soc-conclude` อ่านผลค้นคู่กับ suggestion เขียนบทวิเคราะห์ (`SPLUNK_LOOKUP_ANALYSE=true`)
 
 ```bash
 # 1. ส่ง alert (API key) แล้วรอให้ขั้นแรกเสร็จ — ดู splunk_requirements ที่ job
@@ -145,20 +129,30 @@ curl -s localhost:8081/v1/jobs/<job_id> -H "Authorization: Bearer $JWT" \
 import json,sys
 j=json.load(sys.stdin)
 print(j['lookup_status'], j['lookup_time_ms'], 'ms')
-for a in j['lookup_result'] or []:
-    print('-', a['requirement'][:70])
+for i, a in enumerate(j['lookup_result'] or [], 1):
+    print(f'[{i}]', a['requirement'][:70])
     print('   spl:', a.get('spl'), '| count:', a.get('count'), '| error:', a.get('error'))
-    print('   where:', a.get('index'), a.get('sourcetype'), a.get('fields'))"
+    print('   where:', a.get('index'), a.get('sourcetype'), a.get('fields'))
+fa = j.get('final_analysis')
+if fa: print(); print('analysis:', fa['status'], fa.get('error') or fa.get('reason') or ''); print(fa.get('text', ''))"
 ```
 
 ดูค่าเหล่านี้ในแต่ละ requirement:
 
-- `spl` — คำสั่งที่ยิงจริง เอาไปรันต่อใน Splunk ได้เลย (ทางสืบเชิงลึกที่เหลืออยู่คือคนทำต่อจากตรงนี้)
+- `spl` — คำสั่งที่ Backend เขียนและ connector รันจริง เอาไปรันต่อใน Splunk ได้เลย (ทางสืบเชิงลึกที่เหลืออยู่คือคนทำต่อจากตรงนี้)
 - `index` / `sourcetype` / `fields` — สิ่งที่ Backend วางแผนจาก catalogue ถ้าผิดที่นี่ ให้แก้ catalogue
 - ข้อความ **`Not searched.`** — ไม่มีแผนที่แปลงเป็นการค้นได้ (ไม่มี field ใน catalogue สำหรับ indicator ชนิดนี้
   หรือไม่มี index) ไม่ใช่ว่าค้นแล้วไม่เจอ เพิ่ม field ใน catalogue หรือรันเองใน Splunk
-- `error` — ยิง connector ไม่สำเร็จ ไปดูชั้น 2 ด้วย HTTP code ข้างบน
-- `ranBy` เป็น `backend` เสมอ (`agent` มีในงานเก่าที่เก็บไว้ก่อนเอา query agent ออก)
+- `error` — ค้นไม่สำเร็จ ถ้าเป็น `SPLUNK_ALLOWED_INDEXES is not set` แปลว่า `Backend/.env` ยังไม่ได้ตั้ง allowlist
+  (Backend เขียน SPL เอง และปฏิเสธทุกการค้นถ้ารายการว่าง) นอกนั้นไปดูชั้น 2 ด้วย HTTP code ข้างบน
+
+`final_analysis` (จาก `soc-conclude`):
+
+- `status` เป็น `running` ตอนกำลังอ่านผล, `completed` มี `text`, `failed` มี `error` (ผลค้นยังอยู่ครบ), หรือ `skipped`
+  พร้อม `reason` (ไม่มีการค้นที่สำเร็จเลย จึงไม่มีอะไรให้วิเคราะห์)
+- `text` อ้างผลด้วย `[splunk N]` ตรงกับเลข `[N]` ในหน้า job — ไล่กลับไปหา search ที่มาของข้อความนั้นได้
+- agent ตัวนี้ไม่มี tool ค้นเองไม่ได้ อ่านได้เฉพาะสิ่งที่ Backend ส่งให้ (alert, suggestion, ผลค้นที่ตัดแล้วไม่เกิน ~7000 ตัวอักษร)
+- ถ้า worker ตายระหว่างวิเคราะห์ ค้างที่ `running` ไม่ได้: API จะรายงานเป็น `failed` เมื่อ lookup ไม่ได้ทำงานอยู่แล้ว
 
 หน้า Evidence ของ job (dashboard) แสดงข้อมูลชุดเดียวกัน
 
@@ -166,52 +160,73 @@ for a in j['lookup_result'] or []:
 
 ## ทดสอบ guardrail — ของที่ต้อง "พัง"
 
-ใช้ฟังก์ชัน `splunk` จากหัวข้อชั้น 2 ทุกข้อควรถูกปฏิเสธหรือถูก escape ถ้าข้อไหนผ่านแปลว่ามีช่องโหว่
+ใช้ฟังก์ชัน `splunk` จากหัวข้อชั้น 2 ทุกข้อควรถูกปฏิเสธหรือถูกมองเป็นแค่ค่า ถ้าข้อไหนผ่านแปลว่ามีช่องโหว่
+
+**คำสั่งที่ไม่ใช่การอ่านอย่างเดียว**
+
+```bash
+splunk '{"spl":"search index=\"main\" | delete"}'
+```
+```
+{"error":"command 'delete' is not allowed; permitted: bin, head, makeresults, search, sort, stats, tstats"}     # HTTP 400
+```
+
+รายการคำสั่งที่อนุญาตสั้นโดยตั้งใจ (allowlist ไม่ใช่ denylist) เพราะคำสั่งที่เขียนหรือออกไปข้างนอกได้มีเยอะและเพิ่มทุก release
+
+**SPL injection** — ค่าที่พยายามปิดเครื่องหมายคำพูดแล้วต่อคำสั่ง
+
+```bash
+splunk '{"spl":"search index=\"main\" action=\"blocked\\\" | delete | head 1\" | stats count | head 50"}'
+```
+```
+{"results":[ ... ],"count":1,...}                                                                              # HTTP 200
+```
+
+ได้ผลปกติ: `"` ถูก escape เป็น `\"` ทั้งก้อนยังอยู่ในเครื่องหมายคำพูด `| delete` จึงเป็นข้อความที่ไม่ match
+อะไร ไม่ใช่คำสั่ง connector ตัด literal ในเครื่องหมายคำพูดออกก่อนตรวจ จึงไม่เข้าใจผิดว่าเป็นคำสั่ง และก็ไม่พลาด
+`| delete` จริงที่อยู่นอกเครื่องหมายคำพูด (ข้อบน)
 
 **index นอก allowlist**
 
 ```bash
-splunk /search '{"indicator":"10.1.100.11","indicator_type":"ip","fields":["srcip"],"index":"_internal"}'
+splunk '{"spl":"search index=\"_internal\" | head 1"}'
 ```
 ```
-{"error":"index '_internal' is not allowed; permitted: main, notable"}     # HTTP 400
+{"error":"index '_internal' is not allowed; permitted: main, notable"}                                         # HTTP 400
 ```
 
-**SPL injection** — ยัดคำสั่งลงใน value
+**index ที่เขียนให้หลุด allowlist** — `index=*`, `index=main` (ไม่มีเครื่องหมายคำพูด), `index IN (...)`, `index!=`
 
 ```bash
-splunk /summarise '{"index":"main","filters":{"action":"blocked\" | delete | head 1"},"metrics":[{"fn":"count"}]}'
+splunk '{"spl":"search index=* | head 1"}'
 ```
 ```
-"spl": "search index=\"main\" action=\"blocked\\\" | delete | head 1\" | stats count | head 50"
+{"error":"an index must be written index=\"name\", quoted and exact"}                                          # HTTP 400
 ```
 
-`"` ถูก escape เป็น `\"` ทั้งก้อนยังอยู่ในเครื่องหมายคำพูด `| delete` จึงเป็นข้อความ
-ที่ไม่ match อะไร ไม่ใช่คำสั่ง — **ดู `spl` ที่คืนมาเพื่อยืนยัน** ไม่ใช่ดูแค่จำนวนผลลัพธ์
+**subsearch / macro** — ซ่อน search ที่สองไว้ข้างใน
+
+```bash
+splunk '{"spl":"search index=\"main\" [search index=\"main\" | head 1]"}'
+```
+```
+{"error":"subsearches and macros are not allowed"}                                                            # HTTP 400
+```
 
 **เพดานจำนวนแถว**
 
 ```bash
-splunk /summarise '{"index":"main","max_rows":9999}'
+splunk '{"spl":"search index=\"main\" | head 9999","count":9999}'
 ```
 ```
-"limit": 200,  "spl": "search index=\"main\" | stats count | head 200"     <- capped ที่ SPLUNK_MAX_COUNT
-```
-
-**ช่วงเวลาเกินขอบ**
-
-```bash
-splunk /frequency '{"alert_name":"x","days":999}'
-```
-```
-{"error":"days must be between 1 and 90"}                                  # HTTP 400
+{"results":[ ... ],"count":..., "limit":200}                       <- capped ที่ SPLUNK_MAX_COUNT
 ```
 
 **auth** — token ผิดต้องไม่ผ่าน
 
 ```bash
 docker run --rm --network soc-network curlimages/curl -s -w ' [%{http_code}]\n' \
-  -X POST http://soc-mcp-splunk:8200/search -H 'Authorization: Bearer wrong-token' -d '{}'
+  -X POST http://soc-mcp-splunk:8200/query -H 'Authorization: Bearer wrong-token' -d '{}'
 ```
 ```
 {"detail":"unauthorized"} [401]
@@ -223,6 +238,8 @@ log ฝั่ง connector ควรมี:
 ```
 
 ทุกข้อนี้มี test อัตโนมัติอยู่แล้วใน `MCP-Server/tests/` (`test_splunk_api.py`, `test_auth.py`) — คำสั่งด้านบนไว้ดูด้วยตา
+ส่วนฝั่ง Backend การเขียน SPL (`spl.ts`) ถูกเทียบกับ `spl.py` เดิม 38 กรณี (ทั้ง SPL ที่ได้และข้อความที่ปฏิเสธ)
+ตอนย้ายมา ให้ผลตรงกันทุกกรณี
 
 ---
 

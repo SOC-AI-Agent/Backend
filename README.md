@@ -282,7 +282,7 @@ Split out of the SOC-AI monorepo. The other pieces:
 | `Backend` | API, queue worker, Postgres, Redis. The only writer to the database. |
 | `AI-Service` | The backend's stateless door to the agent platform. |
 | `LLM-Server` | Agents as data — model, prompt, tools — and the loop that runs them. |
-| `MCP-Server` | Tool servers for Splunk, ThreatQ and Confluence. |
+| `MCP-Server` | Connectors for Splunk, ThreatQ and Confluence. |
 | `Frontend` | The analyst dashboard. |
 
 They meet on one Docker network called `soc-network`, created by whichever
