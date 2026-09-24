@@ -242,10 +242,6 @@ which credential each service needs, `testing.md` for what to check when an
 answer looks wrong, and `restructure.md` for why the architecture is shaped the
 way it is.
 
-`api-tests/` is a Bruno collection for this API — auth, admin, and the SOAR
-path. It carries the shared pre-request script that fetches a JWT and an API
-key, because this is the service that issues them.
-
 ## Running all five repos together
 
 `deploy/stack.yml` brings up the whole SOC, expecting the other repos checked

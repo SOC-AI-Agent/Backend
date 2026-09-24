@@ -7,7 +7,6 @@
 | **[testing.md](testing.md)** | คำตอบของ agent ดูผิด ต้องหาว่าผิดตรงไหน |
 | **[splunk-catalog.md](splunk-catalog.md)** | เตรียม Splunk ก่อนใช้จริง — ดึง index/sourcetype/field มาให้ agent ค้นถูก |
 | **[restructure.md](restructure.md)** | อะไรเปลี่ยนไปบ้าง และทำไม |
-| **[../api-tests/README.md](../api-tests/README.md)** | Bruno collection ทดสอบทุก endpoint |
 
 เอกสารของแต่ละ service อยู่ในโฟลเดอร์ของมันเอง:
 [backend](../backend/README.md) ·
