@@ -1,4 +1,4 @@
-# The whole SOC-AI stack, from five repos.
+# The whole SOC-AI stack, from four repos.
 #
 # Each repo runs on its own with its own compose file; this is for bringing all
 # of them up together on one machine. It expects the others checked out beside
@@ -7,14 +7,24 @@
 #   Backend/          <- you are here
 #   AI-Service/
 #   Frontend/
-#   LLM-Server/
 #   MCP-Server/
 #
 #   cd Backend
-#   docker compose -f deploy/stack.yml up -d --build
+#   docker compose -f deploy/stack.yml --project-directory . up -d --build
 #
-# Set REPOS to a different parent if they live elsewhere. Every path below goes
-# through it, so there is one thing to change rather than nine.
+# Set REPOS to a different parent if they live elsewhere — relative to this
+# directory (Backend/), because of --project-directory . above. Without that
+# flag, Compose resolves every relative path (REPOS's own default included)
+# against the directory this file is IN (deploy/), not the one you ran the
+# command from, and every ${REPOS:-..}/AI-Service/... below quietly becomes
+# Backend/AI-Service/... instead of AI-Service/'s real, sibling path — missing
+# one level up, and the first symptom is env_file: file not found.
+#
+# The agent platform (Agent-Server, ../Agent-Server) is not brought up by this
+# file: it is its own stack — own Postgres, own compose, own network, not
+# soc-network — the same way Splunk/ThreatQ/Confluence are external. Bring it
+# up on its own (`cd ../Agent-Server && docker compose up -d --build`) and
+# point soc-ai at it via AI-Service/.env's LLM_SERVER_URL.
 
 services:
   # ── Data ────────────────────────────────────────────────────────────────
@@ -43,23 +53,6 @@ services:
     restart: unless-stopped
     networks: [soc-network]
 
-  # One resident copy of each model, shared by every agent, so an agent run
-  # does not pay a load per turn.
-  soc-ollama:
-    image: ollama/ollama:latest
-    container_name: soc-ollama
-    environment:
-      - OLLAMA_NUM_PARALLEL=1
-      - OLLAMA_MAX_LOADED_MODELS=1
-      - OLLAMA_KEEP_ALIVE=-1
-    volumes: [ollama-data:/root/.ollama]
-    # Below the Docker VM's own memory, or it limits nothing: a limit larger
-    # than the VM reads as a setting and is not one, and the model swaps
-    # instead. Measured at 0.14 tok/s while swapping against 12.93 with room.
-    mem_limit: 7g
-    restart: unless-stopped
-    networks: [soc-network]
-
   # ── Core ────────────────────────────────────────────────────────────────
   soc-core-api:
     build: ${REPOS:-..}/Backend
@@ -67,7 +60,7 @@ services:
     command: node dist/main.js
     environment: {APP_ROLE: api}
     ports: ["8081:8000"]
-    env_file: [../.env]
+    env_file: ["${REPOS:-..}/Backend/.env"]
     volumes: ["${REPOS:-..}/MCP-Server/Splunk/catalog:/catalog:ro"]
     depends_on:
       soc-db: {condition: service_healthy}
@@ -80,7 +73,7 @@ services:
     container_name: soc-core-worker
     command: node dist/main.js
     environment: {APP_ROLE: worker}
-    env_file: [../.env]
+    env_file: ["${REPOS:-..}/Backend/.env"]
     volumes: ["${REPOS:-..}/MCP-Server/Splunk/catalog:/catalog:ro"]
     depends_on:
       soc-db: {condition: service_healthy}
@@ -89,16 +82,8 @@ services:
     networks: [soc-network]
 
   # ── Agent platform ──────────────────────────────────────────────────────
-  soc-llm-server:
-    build: ${REPOS:-..}/LLM-Server
-    container_name: soc-llm-server
-    ports: ["8400:8400"]
-    env_file: ["${REPOS:-..}/LLM-Server/.env"]
-    volumes: [llm-agents:/data]
-    depends_on: [soc-ollama]
-    restart: unless-stopped
-    networks: [soc-network]
-
+  # Agent-Server itself is not a service here — see the note at the top of
+  # this file. soc-ai is the thing on soc-network that calls it.
   soc-ai:
     build: ${REPOS:-..}/AI-Service
     container_name: soc-ai
@@ -106,7 +91,11 @@ services:
     env_file: ["${REPOS:-..}/AI-Service/.env"]
     # The playbook index, so a restart does not embed every page again.
     volumes: [playbook-index:/data]
-    depends_on: [soc-llm-server]
+    # Lets LLM_SERVER_URL=http://host.docker.internal:8000 (AI-Service/.env's
+    # default) reach Agent-Server's published port when it runs, via its own
+    # compose, on this same machine.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     networks: [soc-network]
 
@@ -147,8 +136,6 @@ services:
 volumes:
   postgres-data:
   redis-data:
-  ollama-data:
-  llm-agents:
   playbook-index:
 
 networks:

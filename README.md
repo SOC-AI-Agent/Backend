@@ -242,23 +242,30 @@ which credential each service needs, `testing.md` for what to check when an
 answer looks wrong, and `restructure.md` for why the architecture is shaped the
 way it is.
 
-## Running all five repos together
+## Running all four repos together
 
 `deploy/stack.yml` brings up the whole SOC, expecting the other repos checked
 out beside this one. Each repo also runs alone with its own compose file.
+[Agent-Server](../Agent-Server/readme.md), the agent platform, is not part of
+this: it is a separate system on its own network, brought up with its own
+compose (see "What is not running, and why" below).
 
 ```bash
-docker compose -f deploy/stack.yml up -d --build
+docker compose -f deploy/stack.yml --project-directory . up -d --build
 ```
 
 ## Running the whole thing locally
 
-Check the five repos out side by side, then:
+Check the four repos out side by side, plus
+[Agent-Server](../Agent-Server/readme.md), then:
 
 ```bash
 cd Backend
-./deploy/dev-setup.sh                            # writes .env in all four
-docker compose -f deploy/dev.yml up -d --build   # http://localhost:3001
+./deploy/dev-setup.sh                            # writes .env in Backend, AI-Service, MCP-Server
+docker compose -f deploy/dev.yml --project-directory . up -d --build   # http://localhost:3001
+
+cd ../Agent-Server
+cp .env.example .env && docker compose up -d --build   # http://localhost:7100
 ```
 
 `dev-setup.sh` generates the secrets and writes them into every repo that needs
@@ -287,7 +294,8 @@ cd ../MCP-Server && docker compose up -d soc-mcp-splunk
 ```
 
 `deploy/stack.yml` is the version with all of them, for a machine that has
-those platforms.
+those platforms. Neither file brings up Agent-Server — see the previous
+section.
 
 ---
 
@@ -299,13 +307,19 @@ Split out of the SOC-AI monorepo. The other pieces:
 | --- | --- |
 | `Backend` | API, queue worker, Postgres, Redis. The only writer to the database. |
 | `AI-Service` | The backend's stateless door to the agent platform. |
-| `LLM-Server` | Agents as data — model, prompt, tools — and the loop that runs them. |
 | `MCP-Server` | Connectors for Splunk, ThreatQ and Confluence. |
 | `Frontend` | The analyst dashboard. |
 
+Plus [`Agent-Server`](../Agent-Server/readme.md) (internal name DALL-M):
+agents as data — model, prompt, tools — and the loop that runs them. It
+replaced an earlier in-house LLM server; it is its own system with its own
+Postgres and its own network, not one of the four above, and `AI-Service` is
+the only thing that calls it (see `AI-Service/README.md`, "Agent-Server").
+
 They meet on one Docker network called `soc-network`, created by whichever
 stack comes up first, and address each other by container name. Bring up
-`MCP-Server` and `LLM-Server` first: those are the ones the rest call.
+`MCP-Server` first: it is the one the rest call. Agent-Server is not on
+`soc-network` and brings itself up on its own.
 
 Each repo carries only the settings its own services read. In the monorepo one
 `.env` was shared by every container, which meant the Splunk connector's

@@ -277,12 +277,13 @@ docker compose ps
 curl -s localhost:8081/health    # core API  -> ai_service: up
 docker exec soc-ai python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8100/health').read())"
                                  # ai-service -> llm_server: true (ไม่เปิด port แล้ว)
-curl -s localhost:8400/health    # llm-server -> ollama, agents
+curl -s localhost:8000/          # Agent-Server (คนละ stack, publish port ตรง) -> {"status": "ok"}
 docker compose exec soc-mcp-splunk python -c \
   "import urllib.request; print(urllib.request.urlopen('http://localhost:8200/health').read())"
                                  # connector  -> splunk: true
 
-docker compose exec soc-ollama ollama ps     # model ค้างใน memory ไหม
+# ที่ Agent-Server เอง (ดู Agent-Server/readme.md):
+#   docker compose logs -f dall-m-llamacpp   # model โหลด/ค้างใน memory ไหม
 docker compose logs -f soc-mcp-splunk        # SPL ทุกอันที่ยิงจริงถูก log ไว้
 ```
 

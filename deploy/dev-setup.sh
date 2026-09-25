@@ -4,9 +4,13 @@
 #
 #   ./deploy/dev-setup.sh
 #
-# Writes .env in Backend, AI-Service, LLM-Server and MCP-Server, filling in
-# generated secrets and pointing the services at each other. Frontend needs no
-# .env — its proxy targets are baked into nginx.conf at build time.
+# Writes .env in Backend, AI-Service and MCP-Server, filling in generated
+# secrets and pointing the services at each other. Frontend needs no .env —
+# its proxy targets are baked into nginx.conf at build time.
+#
+# Does not touch Agent-Server (../Agent-Server, the agent platform): it is a
+# separate system with its own .env and its own defaults that work as they
+# are — see AI-Service/README.md, "Agent-Server", for how the two connect.
 #
 # Safe to re-run: it refuses to overwrite an existing .env unless you pass
 # --force, so a machine already set up is not quietly reconfigured.
@@ -25,7 +29,7 @@ FORCE=0
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPOS="$(cd "$HERE/.." && pwd)"
 
-for r in Backend AI-Service LLM-Server MCP-Server; do
+for r in Backend AI-Service MCP-Server; do
   [ -d "$REPOS/$r" ] || { echo "cannot find $REPOS/$r — check the repos are checked out side by side"; exit 1; }
 done
 
@@ -83,33 +87,43 @@ CONFLUENCE_MCP_AUTH_TOKEN="$CONFLUENCE_TOKEN" \
 
 AI_SERVICE_AUTH_TOKEN="$AI_TOKEN" \
   write_env AI-Service
-write_env LLM-Server
 
-# The LLM server reaches the connectors itself, so it carries the same tokens.
-# Rewritten rather than left to .env.example, which has them blank.
-if [ -f "$REPOS/LLM-Server/.env" ]; then
-  python3 - "$REPOS/LLM-Server/.env" "$THREATQ_TOKEN" "$CONFLUENCE_TOKEN" <<'PY'
-import json, re, sys
-path, tq, cf = sys.argv[1:4]
-servers = json.dumps([
-    {"name": "threatq",    "url": "http://soc-mcp-threatq:8300/mcp",    "token": tq},
-    {"name": "confluence", "url": "http://soc-mcp-confluence:8600/mcp", "token": cf},
-], separators=(",", ":"))
-s = open(path).read()
-s = re.sub(r"^MCP_SERVERS=.*$", "MCP_SERVERS=" + servers, s, flags=re.M)
-open(path, "w").write(s)
-PY
-  echo "  LLM-Server: MCP_SERVERS points at the ThreatQ and Confluence connectors (Splunk is plain HTTP)"
+# Built ahead of the final message rather than nested inside its heredoc —
+# a heredoc's body is read verbatim until its own terminator, so a second
+# <<HERE inside one does not open a nested heredoc, it just becomes text.
+if [ -d "$REPOS/Agent-Server" ]; then
+  AGENT_NOTE="
+  cd ../Agent-Server
+  cp .env.example .env   # its defaults work as they are for local dev
+  docker compose up -d --build   # http://localhost:7100
+
+Then create the three agents (soc-suggest, soc-requirements, soc-conclude —
+or whatever LLM_SUGGEST_AGENT / LLM_REQUIREMENTS_AGENT / LLM_CONCLUDE_AGENT
+name in Backend/.env) at that UI, or POST /restful/agents. Nothing here
+restores or checks them.
+
+soc-ai reaches it at AI-Service/.env's LLM_SERVER_URL
+(default: http://host.docker.internal:8000, which already assumes it runs
+on this machine)."
+else
+  AGENT_NOTE="
+  Not found beside this repo. Clone it and run its own quick start
+  (readme.md) — its defaults need no edits for local development — then
+  set LLM_SERVER_URL in AI-Service/.env if it is not on this machine."
 fi
 
 cat <<EOF
 
 Done. Bring the stack up with:
 
-  docker compose -f deploy/dev.yml up -d --build
+  docker compose -f deploy/dev.yml --project-directory . up -d --build
 
 The seed creates roles only. Create the first admin by hand — see
 Backend/docs/setup.md, section 4.
+
+Agent platform (Agent-Server) — separate, not written by this script
+----------------------------------------------------------------------
+$AGENT_NOTE
 
 Not running, and why
 --------------------

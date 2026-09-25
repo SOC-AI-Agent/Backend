@@ -243,11 +243,13 @@ echo "AI_SERVICE_AUTH_TOKEN=$(openssl rand -hex 32)"   # ค่าเดีย�
 แล้วขึ้นระบบ:
 
 ```bash
-docker compose --profile ai up -d --build
-docker compose exec soc-ollama ollama pull qwen2.5:7b
+docker compose -f deploy/dev.yml --project-directory . up -d --build
 docker compose exec soc-core-api npx prisma db push
 docker compose exec soc-core-api npm run seed          # roles only
 ```
+
+Agent-Server (agent platform) เป็นอีก repo ขึ้นแยก ไม่มีในคำสั่งข้างบน — ดู
+[setup.md ข้อ 3](setup.md)
 
 สร้าง admin คนแรกเอง: [setup.md ข้อ 4](setup.md)
 
@@ -257,7 +259,7 @@ docker compose exec soc-core-api npm run seed          # roles only
 curl -s localhost:8081/health   # ai_service: "up"
 docker exec soc-ai python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8100/health').read())"
                                 # llm_server: true
-curl -s localhost:8400/health   # agents, mcp_servers
+curl -s localhost:8000/         # Agent-Server: {"status": "ok"}
 docker compose exec soc-mcp-splunk python -c \
   "import urllib.request; print(urllib.request.urlopen('http://localhost:8200/health').read())"
   # splunk: true

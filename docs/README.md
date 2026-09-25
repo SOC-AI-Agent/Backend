@@ -11,9 +11,9 @@
 เอกสารของแต่ละ service อยู่ในโฟลเดอร์ของมันเอง:
 [backend](../backend/README.md) ·
 [ai-service](../ai-service/README.md) ·
-[llm-server](../llm-server/README.md) ·
 [MCP Splunk](../mcp-server/Splunk/README.md) ·
-[MCP ThreatQ](../mcp-server/Threatq/README.md)
+[MCP ThreatQ](../mcp-server/Threatq/README.md) ·
+[Agent-Server](../../Agent-Server/readme.md) (agent platform — repo แยก คนละ network, ดู `ai-service/README.md` หัวข้อ "Agent-Server")
 
 ---
 
@@ -34,6 +34,12 @@
 ---
 
 ## ระบบทำงานยังไง
+
+> ⚠️ **ไดอะแกรมนี้เก่ากว่า restructure.md รอบล่าสุด** — วาดไว้ตอน agent ยังเรียก
+> MCP tool ค้น Splunk เองผ่าน `LLM Server`/Ollama ปัจจุบัน Splunk ไม่ผ่าน MCP
+> แล้ว (Backend เขียน SPL เอง ส่งตรงไป connector) agent มี 3 ตัวไม่มี tool เลย
+> และ agent platform คือ `Agent-Server` (repo แยก ไม่ใช่ `LLM Server`/Ollama) —
+> ดู [[soc-flow-design]] ในความจำ หรือ `restructure.md` รอบล่าสุดสำหรับของจริง
 
 ```
 FortiSOAR ──► soc-core-api ──► BullMQ ──► worker

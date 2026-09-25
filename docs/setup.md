@@ -45,19 +45,42 @@ echo "THREATQ_MCP_AUTH_TOKEN=$(openssl rand -hex 32)"
 
 ## 2. ขึ้นระบบ
 
+ขั้นตอนที่เหลือของเอกสารนี้อ้างถึง `AI-Service`, `MCP-Server` ด้วย ไม่ใช่แค่ Backend —
+ใช้ `deploy/dev.yml` (ดู [README](../README.md#running-the-whole-thing-locally)) หรือขึ้นแต่ละ repo เอง:
+
 ```bash
-docker compose up -d --build
+docker compose -f deploy/dev.yml --project-directory . up -d --build
 ```
 
 ---
 
-## 3. โหลด model
+## 3. Agent-Server (agent platform)
+
+แยกเป็นอีก repo ไม่ได้ขึ้นมาพร้อม `deploy/dev.yml` — ต้องขึ้นเอง (ดู
+[AI-Service/README.md](../../AI-Service/README.md) หัวข้อ "Agent-Server"):
 
 ```bash
-docker compose exec soc-ollama ollama pull qwen2.5:7b
+cd ../Agent-Server
+cp .env.example .env               # ค่า default ใช้ได้เลย ไม่ต้องแก้
+docker compose up -d --build       # http://localhost:7100
 ```
 
-~4.7GB `OLLAMA_KEEP_ALIVE=-1` ทำให้มันค้างใน memory — call แรก ~18 วิ หลังจากนั้น ~1 วิ
+`LLAMA_HF_MODEL` (default `ggml-org/gemma-3-1b-it-GGUF`) โหลดเองตอน container
+ขึ้นครั้งแรก ใช้เวลาสักพักตามความเร็วเน็ต ดูความคืบหน้า: `docker compose logs -f dall-m-llamacpp`
+
+ตั้ง DB, model ตัวแรก และ admin คนแรกของ Agent-Server (คนละระบบกับ admin ของ dashboard นี้):
+
+```bash
+pip install -r script/requirements.txt
+python script/create_db.py
+python script/insert_default_model.py
+python script/add_admin_user.py --username admin --email admin@example.com --password <รหัส>
+```
+
+> ⚠️ `add_admin_user.py` เก็บรหัสเป็น plain text (ยังไม่ hash) — อย่าใช้รหัสที่ใช้จริงที่อื่น
+
+`AI-Service/.env`'s `LLM_SERVER_URL` (default `http://host.docker.internal:8000`)
+ชี้มาที่นี่แล้ว ถ้า Agent-Server รันอยู่เครื่องอื่นต้องแก้ค่านี้
 
 ---
 
@@ -110,17 +133,26 @@ Backend เรียก agent 3 ตัว **ถ้าขาดตัวไหน
 
 การค้น Splunk เอง Backend เขียน SPL ส่งผ่าน connector ไม่ผ่าน agent
 
-สร้างจากไฟล์ที่ commit ไว้:
+สร้างที่ Agent-Server (คนละระบบ, คนละ auth กับ dashboard นี้) — ไม่มีไฟล์ JSON ให้ import
+เหมือนเดิม เพราะ agent ของมันเก็บใน Postgres ของมันเอง:
+
+เปิด `http://localhost:7100` ล็อกอินด้วย admin ที่สร้างไว้ในข้อ 3 แล้วสร้าง agent 3 ตัว
+ตาม slug ในตาราง (Model เลือกจาก dropdown ที่ `insert_default_model.py` ลงทะเบียนไว้ ใส่
+system prompt ตามที่ตั้งใจไว้ในตัวเดิม) — `LLM_DEFAULT_AGENT` (default `soc-suggest`)
+มีไว้สำหรับผู้เรียกที่ไม่ระบุชื่อ agent
+
+หรือทาง API (ต้อง login เอา JWT ก่อน, และต้องรู้ `owner_id`/`model_id` เป็น UUID):
 
 ```bash
-for a in soc-suggest soc-requirements soc-conclude; do
-  curl -s -X POST localhost:8400/agents -H 'Content-Type: application/json' \
-    -d @../LLM-Server/agents/$a.json
-done
-```
+TOKEN=$(curl -s -X POST localhost:8000/restful/auth/login -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"<รหัส Agent-Server>"}' \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
 
-หรือเปิด `http://localhost:8400` → New agent แล้วกรอกตามไฟล์เหล่านั้น (Model เลือกจาก dropdown
-ซึ่งเห็นเฉพาะที่ pull ไว้จริง) — `LLM_DEFAULT_AGENT` (default `soc-suggest`) มีไว้สำหรับผู้เรียกที่ไม่ระบุชื่อ agent
+curl -s -X POST localhost:8000/restful/agents -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{
+    "slug":"soc-suggest","name":"soc-suggest","owner_id":"<user uuid>",
+    "model_id":"<model uuid>","system_prompt":"<system prompt เดิม>"}'
+```
 
 Backend ต้องตั้ง `SPLUNK_ALLOWED_INDEXES` ด้วย (ชุดเดียวกับ `MCP-Server/.env`) เพราะมันเป็นตัวเขียน SPL
 รายการว่าง = ปฏิเสธทุกการค้น
@@ -133,7 +165,7 @@ Backend ต้องตั้ง `SPLUNK_ALLOWED_INDEXES` ด้วย (ชุ�
 curl -s localhost:8081/health    # ai_service: "up"
 docker exec soc-ai python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8100/health').read())"
                                  # llm_server: true, playbooks: จำนวนที่ index แล้ว
-curl -s localhost:8400/health    # ollama: true, agents: 1
+curl -s localhost:8000/         # Agent-Server: {"status": "ok"} — ไม่มี /health รวม ollama/agents
 docker compose exec soc-mcp-splunk python -c \
   "import urllib.request; print(urllib.request.urlopen('http://localhost:8200/health').read())"
 ```
@@ -175,7 +207,7 @@ curl -s -X POST localhost:8081/v1/analyze -H "X-API-Key: $KEY" \
     "raw_log":"srcip=10.1.100.11 dstip=45.83.122.9 action=\"blocked\""}'
 ```
 
-ไม่มี field `prompt` — agent บน `llm-server` ถือ system prompt ของตัวเอง
+ไม่มี field `prompt` — agent บน Agent-Server ถือ system prompt ของตัวเอง
 playbook เก่าที่ยังส่งมาไม่ error เฉยๆ ถูกตัดทิ้งที่ validation pipe
 
 ได้ `job_id` แล้ว poll:
@@ -191,8 +223,8 @@ curl -s localhost:8081/v1/results/<job_id> -H "X-API-Key: $KEY"
 | | |
 | --- | --- |
 | Dashboard | `http://localhost:3001` |
-| Agent UI | `http://localhost:8400` |
-| Agent API (Swagger) | `http://localhost:8400/docs` |
+| Agent-Server UI | `http://localhost:7100` (คนละ stack, ขึ้นแยก — ดูข้อ 3) |
+| Agent-Server API (Swagger) | `http://localhost:8000/docs` |
 | Core API | `http://localhost:8081` |
 | Core API docs (Swagger) | `http://localhost:8081/docs` |
 | AI service | ไม่เปิด port — เรียกได้จากใน `soc-network` เท่านั้น และต้องมี `AI_SERVICE_AUTH_TOKEN` |
@@ -261,7 +293,7 @@ playbook ยิง `POST /v1/analyze` พร้อม header `X-API-Key` แล�
 | `SPLUNK_TOKEN` | ต้องเป็น role **search-only** ถอด `delete_by_keyword` และ `run_script` |
 | `SPLUNK_VERIFY_SSL` | ต้องเป็น `true` (lab ตั้ง false) |
 | ThreatQ account | read-only |
-| `llm-server` | **ไม่มี auth เลย** ใครถึง port 8400 ได้ก็แก้ system prompt ของ agent ได้ ต้องอยู่หลัง reverse proxy |
+| `Agent-Server` | **ไม่มี auth บน `/v1/agents/...` เลย** (ยังไม่มีระบบ API key — ดู readme ของมัน "Known limitations") ใครถึง port 8000 ได้ก็เรียก agent ได้ฟรี ต้องอยู่หลัง reverse proxy หรือ firewall เฉพาะ `soc-ai` |
 | Firewall | เปิดเฉพาะ 3001 และ 8081 ให้ IP ที่อนุญาต |
 | `env_file: .env` | ฉีด `.env` ทั้งไฟล์เข้าทุก container — `soc-mcp-splunk` ถือ `JWT_SECRET_KEY` อยู่ ทั้งที่แค่ query Splunk |
 
