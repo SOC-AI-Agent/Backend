@@ -166,3 +166,34 @@ deploy_production:
       echo "the API did not become healthy within 2 minutes"
       docker compose logs --tail 50 soc-core-api
       exit 1
+
+# Prints the production database's tables, columns, enums, constraints,
+# indexes, Prisma migration history, and its drift from the deployed
+# prisma/schema.prisma — the inventory the README asks for before any
+# migration is baselined. Read-only (see scripts/inspect-db-schema.sh);
+# structure only, no rows and no credentials reach the log.
+#
+# Never runs on its own: press ▶ on it in a pipeline for main. It needs
+# nothing else in the pipeline, so it can run before, after or without a
+# deploy.
+inspect_db_schema:
+  stage: deploy
+  image: docker:latest
+  # Same runner as deploy_production: the machine whose soc-db this reads.
+  tags:
+    - soc-deploy
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    DOCKER_TLS_CERTDIR: ""
+  # Reads production without deploying to it; whoever may deploy to the
+  # protected "production" environment is who may run this.
+  environment:
+    name: production
+    action: access
+  needs: []
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+      allow_failure: true
+  script:
+    - sh scripts/inspect-db-schema.sh
