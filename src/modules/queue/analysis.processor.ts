@@ -9,6 +9,7 @@ import { AiService } from '../ai/ai.service';
 import { buildRequirementsPrompt } from '../ai/conclusion';
 import { ModelRequirement, parseRequirements, parseSuggestion } from '../ai/requirements';
 import { CatalogService } from '../enrichment/catalog.service';
+import { dropFields } from '../enrichment/drop-fields';
 import { EnrichmentService } from '../enrichment/enrichment.service';
 import { AuditService } from '../audit/audit.service';
 import { ANALYSIS_QUEUE, AnalyzeAlertPayload } from './analysis-job.payload';
@@ -18,8 +19,9 @@ import { LOOKUP_QUEUE, RUN_LOOKUP_JOB, SplunkLookupPayload } from './lookup-job.
  * Runs only in the worker process (APP_ROLE=worker).
  *
  * Stage 1, and only stage 1: PROCESSING -> enrich -> the suggestion agent, then the
- * requirements agent (neither has tools) -> persist -> COMPLETED, writing an audit
- * entry at every transition. The AI service never touches the database.
+ * requirements agent (neither has tools; the second is skipped when
+ * SPLUNK_LOOKUP_MODE=off) -> persist -> COMPLETED, writing an audit entry at every
+ * transition. The AI service never touches the database.
  *
  * Searching Splunk is stage 2 and lives in its own queue. That is deliberate:
  * a lookup is minutes of inference per requirement, and on one worker it would
@@ -61,12 +63,14 @@ export class AnalysisProcessor extends WorkerHost {
     // for an agent to decide whether to bother with.
     // record.createdAt is when the alert reached us, which is the closest thing
     // to when it fired that is reliably present. Used to anchor the searches.
+    const evidence = dropFields(rawLog, this.config.get<string[]>('enrichment.dropFields') ?? []);
+    const splunkStage = this.config.get<string>('lookup.mode') !== 'off';
     const enrichment = await this.enrichment.run(
-      rawLog, indicators, alertName, undefined, record.createdAt,
+      evidence, indicators, alertName, undefined, record.createdAt,
     );
     const rendered = this.ai.buildRenderedPrompt(
-      rawLog,
-      this.enrichment.render(enrichment),
+      evidence,
+      this.enrichment.render(enrichment, splunkStage),
     );
 
     await this.prisma.aiJob.update({
@@ -117,73 +121,10 @@ export class AnalysisProcessor extends WorkerHost {
 
     const suggestion = parseSuggestion(result.response);
 
-    // The requirements agent decides what is worth knowing; the catalogue decides where to
-    // look. Each requirement it wrote names a value the extractor already
-    // found, which gives the type without parsing English, and the type plus
-    // the alert's own index and sourcetype give the fields. Nothing about the
-    // search is guessed and nothing about the question is fixed in code.
-    const maxRequirements = this.config.get<number>('lookup.maxRequirements');
-    // Skipped values count as known here. They were skipped for ThreatQ — no
-    // intel provider has heard of an internal address — but they are exactly
-    // what a Splunk search is for, and the model asks about them constantly:
-    // "what else did 10.1.100.44 talk to" is the right question and used to
-    // come back unaimable.
-    const known = [
-      ...enrichment.indicators.map((i) => ({ type: i.type, value: i.value, source: i.source })),
-      ...enrichment.skipped.map((s: any) => ({
-        type: s.type, value: s.value, source: 'skipped for intel, still searchable',
-      })).filter((s: any) => s.type),
-    ];
-
-    // A second call, to a second agent, that reads the suggestion as well as the
-    // alert. Its failure costs the model-chosen part of the plan, not the job: the
-    // suggestion is already in hand and the derived plan below is the floor.
-    let requirementsRun: Awaited<ReturnType<AiService['generate']>> | null = null;
-    let asked: ReturnType<AnalysisProcessor['aim']> = [];
-    try {
-      requirementsRun = await this.ai.generate(
-        buildRequirementsPrompt(rendered, suggestion.suggestion),
-        { agent: this.config.get<string>('ai.requirementsAgent') },
-      );
-      asked = this.aim(parseRequirements(requirementsRun.response, known, maxRequirements), enrichment);
-    } catch (err: any) {
-      this.logger.warn(
-        `Job ${jobId}: the requirements agent failed (${err?.message ?? err}) — ` +
-          'the suggestion is kept and the derived plan is used instead',
-      );
-    }
-
+    const { finalPlan, requirementsRun } = splunkStage
+      ? await this.planLookups(jobId, rendered, suggestion.suggestion, enrichment)
+      : { finalPlan: [], requirementsRun: null };
     const elapsedMs = Date.now() - startedAt;
-    // No usable question from the model is not the same as no question. The
-    // derived plan — what follows mechanically from the indicators — is the
-    // floor, so a bad generation costs quality rather than the whole stage.
-    // What the model asked for, or — when it asked for nothing usable — what
-    // follows mechanically from the indicators. A bad generation should cost
-    // quality, not the whole stage.
-    const body = asked.length > 0 ? asked : enrichment.lookups.filter((l: any) => l.scope !== 'playbook');
-    if (asked.length === 0 && body.length > 0) {
-      this.logger.warn(
-        `Job ${jobId}: the model asked for nothing that could be aimed — ` +
-          `falling back to ${body.length} derived lookup(s)`,
-      );
-    }
-
-    // The playbook's own search goes first, whatever the model asked for. A
-    // person who knew both this detection and this estate wrote it, so it does
-    // not depend on the model remembering to want it — and it carries
-    // structure (index, filters, metrics) that a requirement copied out as a
-    // sentence would lose. Added after the fallback is decided, or its
-    // presence would make an empty model reply look like a full plan.
-    const fromPlaybook = enrichment.lookups.filter((l: any) => l.scope === 'playbook');
-    const finalPlan = [...fromPlaybook, ...body].slice(0, maxRequirements);
-
-    const unaimed = finalPlan.filter((l: any) => l.indicatorType && l.unscoped);
-    if (unaimed.length > 0) {
-      this.logger.warn(
-        `Job ${jobId}: ${unaimed.length} of ${finalPlan.length} lookups are not aimed at a field — ` +
-          `the catalogue has no entry for: ${[...new Set(unaimed.map((l: any) => l.indicatorType))].join(', ')}`,
-      );
-    }
 
     await this.prisma.aiJob.update({
       where: { jobId },
@@ -230,6 +171,81 @@ export class AnalysisProcessor extends WorkerHost {
     });
 
     await this.maybeQueueLookup(jobId, finalPlan, actorLabel);
+  }
+
+  /**
+   * What stage 2 would search: the requirements agent's questions, each aimed
+   * by the catalogue, behind the playbook's own search.
+   */
+  private async planLookups(jobId: string, rendered: string, suggestion: string, enrichment: any) {
+    // The requirements agent decides what is worth knowing; the catalogue decides where to
+    // look. Each requirement it wrote names a value the extractor already
+    // found, which gives the type without parsing English, and the type plus
+    // the alert's own index and sourcetype give the fields. Nothing about the
+    // search is guessed and nothing about the question is fixed in code.
+    const maxRequirements = this.config.get<number>('lookup.maxRequirements');
+    // Skipped values count as known here. They were skipped for ThreatQ — no
+    // intel provider has heard of an internal address — but they are exactly
+    // what a Splunk search is for, and the model asks about them constantly:
+    // "what else did 10.1.100.44 talk to" is the right question and used to
+    // come back unaimable.
+    const known = [
+      ...enrichment.indicators.map((i) => ({ type: i.type, value: i.value, source: i.source })),
+      ...enrichment.skipped.map((s: any) => ({
+        type: s.type, value: s.value, source: 'skipped for intel, still searchable',
+      })).filter((s: any) => s.type),
+    ];
+
+    // A second call, to a second agent, that reads the suggestion as well as the
+    // alert. Its failure costs the model-chosen part of the plan, not the job: the
+    // suggestion is already in hand and the derived plan below is the floor.
+    let requirementsRun: Awaited<ReturnType<AiService['generate']>> | null = null;
+    let asked: ReturnType<AnalysisProcessor['aim']> = [];
+    try {
+      requirementsRun = await this.ai.generate(
+        buildRequirementsPrompt(rendered, suggestion),
+        { agent: this.config.get<string>('ai.requirementsAgent') },
+      );
+      asked = this.aim(parseRequirements(requirementsRun.response, known, maxRequirements), enrichment);
+    } catch (err: any) {
+      this.logger.warn(
+        `Job ${jobId}: the requirements agent failed (${err?.message ?? err}) — ` +
+          'the suggestion is kept and the derived plan is used instead',
+      );
+    }
+
+    // No usable question from the model is not the same as no question. The
+    // derived plan — what follows mechanically from the indicators — is the
+    // floor, so a bad generation costs quality rather than the whole stage.
+    // What the model asked for, or — when it asked for nothing usable — what
+    // follows mechanically from the indicators. A bad generation should cost
+    // quality, not the whole stage.
+    const body = asked.length > 0 ? asked : enrichment.lookups.filter((l: any) => l.scope !== 'playbook');
+    if (asked.length === 0 && body.length > 0) {
+      this.logger.warn(
+        `Job ${jobId}: the model asked for nothing that could be aimed — ` +
+          `falling back to ${body.length} derived lookup(s)`,
+      );
+    }
+
+    // The playbook's own search goes first, whatever the model asked for. A
+    // person who knew both this detection and this estate wrote it, so it does
+    // not depend on the model remembering to want it — and it carries
+    // structure (index, filters, metrics) that a requirement copied out as a
+    // sentence would lose. Added after the fallback is decided, or its
+    // presence would make an empty model reply look like a full plan.
+    const fromPlaybook = enrichment.lookups.filter((l: any) => l.scope === 'playbook');
+    const finalPlan = [...fromPlaybook, ...body].slice(0, maxRequirements);
+
+    const unaimed = finalPlan.filter((l: any) => l.indicatorType && l.unscoped);
+    if (unaimed.length > 0) {
+      this.logger.warn(
+        `Job ${jobId}: ${unaimed.length} of ${finalPlan.length} lookups are not aimed at a field — ` +
+          `the catalogue has no entry for: ${[...new Set(unaimed.map((l: any) => l.indicatorType))].join(', ')}`,
+      );
+    }
+
+    return { finalPlan, requirementsRun };
   }
 
   /**

@@ -81,7 +81,7 @@ export class EnrichmentService {
    * NOT established — "no threat-intelligence record" is a different statement
    * from "clean", and a model given the short version will print the wrong one.
    */
-  render(enrichment: Enrichment): string {
+  render(enrichment: Enrichment, forSearch = true): string {
     const lines: string[] = [];
     const { indicators, skipped, threatq } = enrichment;
 
@@ -90,7 +90,8 @@ export class EnrichmentService {
     // definition is where a model starts inventing one.
     const playbook = this.playbook.render(enrichment.playbook);
     if (playbook) lines.push(playbook, '');
-    lines.push(this.sourceMap.render(enrichment.source), '');
+    // Where the alert's data lives only matters to something that will search it.
+    if (forSearch) lines.push(this.sourceMap.render(enrichment.source), '');
     lines.push('--- EXTRACTED INDICATORS ---');
     if (indicators.length === 0) {
       lines.push('(none found in the alert)');

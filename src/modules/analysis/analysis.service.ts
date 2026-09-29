@@ -1,5 +1,6 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { AiJob, JobStatus, LookupStatus, Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 
@@ -26,6 +27,7 @@ export class AnalysisService {
     private readonly audit: AuditService,
     @InjectQueue(ANALYSIS_QUEUE) private readonly queue: Queue<AnalyzeAlertPayload>,
     @InjectQueue(LOOKUP_QUEUE) private readonly lookupQueue: Queue<SplunkLookupPayload>,
+    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -106,6 +108,10 @@ export class AnalysisService {
   async requestLookup(jobId: string, requestedBy: string) {
     const job = await this.prisma.aiJob.findUnique({ where: { jobId } });
     if (!job) throw new NotFoundException('Job not found');
+
+    if (this.config.get<string>('lookup.mode') === 'off') {
+      throw new BadRequestException('the Splunk stage is turned off (SPLUNK_LOOKUP_MODE=off)');
+    }
 
     if (job.status !== JobStatus.COMPLETED) {
       throw new BadRequestException(

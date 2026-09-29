@@ -128,16 +128,20 @@ export default () => ({
   },
   lookup: {
     /**
-     * 'manual' | 'auto' — when the Splunk stage runs.
+     * 'manual' | 'auto' | 'off' — when the Splunk stage runs.
      *
      * manual keeps the requirements on the job row and waits for someone to
      * press the button. Each requirement is a search against a production Splunk;
      * making it deliberate means that load is spent on alerts a person actually
      * wants it spent on.
+     *
+     * off is stage 1 alone: the suggestion agent is the only model call, and
+     * neither the requirements agent nor the where-to-search block in its
+     * prompt is spent on a search nobody will run.
      */
-    mode: (process.env.SPLUNK_LOOKUP_MODE ?? 'manual').toLowerCase() === 'auto'
-      ? 'auto'
-      : 'manual',
+    mode: ((m) => (m === 'auto' || m === 'off' ? m : 'manual'))(
+      (process.env.SPLUNK_LOOKUP_MODE ?? 'manual').toLowerCase(),
+    ),
     /**
      * Whether the results are read by an agent once they are in. Off leaves the
      * answers as they are, for a deployment that does not want another model call.
@@ -163,6 +167,19 @@ export default () => ({
     // raw rather than as ES notables:
     //   ALERT_SOURCE_SIGNATURES=eventSource+awsRegion=cloud:aws:cloudtrail
     sourceSignatures: process.env.ALERT_SOURCE_SIGNATURES ?? '',
+
+    // ES notable fields about the search, not the event: its time window and
+    // its own ids. Removed before indicators are extracted and before the
+    // prompt is built — over a third of a notable's tokens, and source_event_id
+    // ends in 32 hex characters that were extracted as an MD5 and looked up in
+    // ThreatQ. The job row keeps the raw log as sent. Set empty to keep all.
+    dropFields: (
+      process.env.ALERT_DROP_FIELDS ??
+      'info_min_time,info_max_time,info_search_time,source_event_id,source_guid,orig_time,orig_investigation_type'
+    )
+      .split(',')
+      .map((v) => v.trim())
+      .filter(Boolean),
 
     // Indicators that belong to us. An internal address or domain is not worth
     // a threat-intelligence call, and a "no record" reply for one is exactly
