@@ -30,6 +30,28 @@ export interface IndexEntry {
   sourcetypes?: Record<string, SourcetypeEntry>;
 }
 
+/**
+ * Which roles a detail under a requirement names, by its key. The requirements
+ * agent labels each detail (`device: FGT-01`, `user: j.smith`); this is what turns
+ * the label into this estate's field name. A key not listed gets no field hint —
+ * the detail is still sent to Text-to-SPL, just without a field.
+ */
+const DETAIL_ROLES: Record<string, string[]> = {
+  source: ['src_ip'], src: ['src_ip'], src_ip: ['src_ip'], source_ip: ['src_ip'],
+  destination: ['dest_ip'], dest: ['dest_ip'], dst: ['dest_ip'], dest_ip: ['dest_ip'],
+  ip: ['src_ip', 'dest_ip'],
+  src_port: ['src_port'], dest_port: ['dest_port'], port: ['dest_port'],
+  user: ['user'], username: ['user'], user_name: ['user'], account: ['user'],
+  device: ['host'], host: ['host'], hostname: ['host'],
+  domain: ['domain'],
+  hash: ['hash'], md5: ['hash'], sha1: ['hash'], sha256: ['hash'],
+  action: ['action'],
+};
+// `source` and `destination` name an address only when the value is one; a host
+// name under either key is not a src_ip.
+const ADDRESS_KEYS = new Set(['source', 'src', 'destination', 'dest', 'dst']);
+const ADDRESS = /^(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f]*:[0-9a-f:]+)$/i;
+
 /** Which roles an indicator of each kind could be carried by. */
 const INDICATOR_ROLES: Record<string, string[]> = {
   ip: ['src_ip', 'dest_ip'],
@@ -116,6 +138,25 @@ export class CatalogService implements OnModuleInit {
       }
     }
     return fields;
+  }
+
+  /**
+   * The fields one detail under a requirement sits in (`user: j.smith` -> `user`,
+   * `device: FGT-01` -> `devname`), scoped like the indicator it travels with.
+   * Empty when the key names no role or the catalogue has no field for it.
+   */
+  fieldsForDetail(key: string, value: string, index?: string | null, sourcetype?: string | null): string[] {
+    const roles = DETAIL_ROLES[key];
+    if (!roles) return [];
+    if (ADDRESS_KEYS.has(key) && !ADDRESS.test(value)) return [];
+    const fields: string[] = [];
+    for (const role of roles) {
+      for (const field of this.fieldsForRole(role, index, sourcetype)) {
+        if (!fields.includes(field)) fields.push(field);
+      }
+    }
+    // Unscoped, a role can have a spelling per sourcetype; a hint listing ten is noise.
+    return fields.slice(0, 4);
   }
 
   /**

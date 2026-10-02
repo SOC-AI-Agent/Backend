@@ -44,18 +44,19 @@
 ```
 FortiSOAR ──► soc-core-api ──► BullMQ ──► worker
                                             │
-                       ┌────────────────────┤  ก่อน model ทำงาน (โค้ดล้วน)
+                       ┌────────────────────┤  stage 1 ก่อน model ทำงาน (โค้ดล้วน)
                        │  1. ดึง IOC จาก log
                        │  2. กรอง private/internal
-                       │  3. ThreatQ lookup
+                       │  3. ThreatQ lookup ─────────────► ThreatQ REST API (เรียกตรง)
+                       │  4. match playbook ◄── soc-ai ◄── Confluence REST API (worker sync ตรง)
                        └────────────────────┤
                                             ▼
-                            soc-ai ══SSE══► LLM Server
-                                               │        │
-                                     /api/chat │        │ MCP
-                                               ▼        ▼
-                                         soc-ollama   soc-mcp-splunk ──► Splunk
-                                                      soc-mcp-threatq ─► ThreatQ
+                            soc-ai ──► Agent-Server (suggestion, requirements)
+                                            │
+                       stage 2 (ปุ่ม / auto) ▼
+                       requirement (ข้อความ) ──MCP──► saia_generate_spl ──► SPL
+                                  spl-guard ตรวจ ──MCP──► splunk_run_query ──► Splunk
+                       dev: soc-mcp-splunk (mock)   prod: Splunk MCP Server app
 ```
 
 **สิ่งที่ deterministic อยู่ในโค้ด ไม่ใช่ใน model** — ดึง IOC, กรอง, lookup
@@ -63,8 +64,10 @@ FortiSOAR ──► soc-core-api ──► BullMQ ──► worker
 
 **model ตัดสินใจเรื่องเดียว** — หลักฐานพอหรือยัง ต้องค้น log เพิ่มไหม
 
-**model ไม่เคยเขียน query** — tool รับ parameter แบบ structured แล้ว `spl.py`
-ประกอบ SPL เอง SPL เขียนและลบข้อมูลได้ และ alert text เป็นของที่ผู้โจมตีแต่งได้
+**model ของเราไม่เขียน query** — stage 2 ส่ง requirement เป็นข้อความให้ Text-to-SPL
+ของ Splunk เขียน SPL แล้ว `spl-guard.ts` ตรวจก่อนรันทุกครั้ง (read-only, index ใน allowlist)
+เพราะ SPL เขียนและลบข้อมูลได้ และ alert text เป็นของที่ผู้โจมตีแต่งได้ — role ของ token
+ใน Splunk ต้องเขียนไม่ได้อยู่ดี ดู [MCP-Server/Splunk/README.md](../../MCP-Server/Splunk/README.md)
 
 ---
 

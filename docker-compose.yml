@@ -5,9 +5,11 @@
 #   cp .env.example .env
 #   docker compose up -d --build
 #
-# Needs, over soc-network: soc-ai (the AI service), soc-mcp-splunk and
-# soc-mcp-confluence. It starts without them and each call that needs one fails
-# with a message naming it, rather than the stack refusing to come up.
+# Needs, over soc-network: soc-ai (the AI service), and for stage 2 a Splunk MCP
+# server (soc-mcp-splunk in development, Splunk's own in production). ThreatQ and
+# Confluence are called directly over the company network. It starts without any
+# of them and each call that needs one fails with a message naming it, rather
+# than the stack refusing to come up.
 
 services:
   soc-db:
@@ -48,11 +50,11 @@ services:
     ports: ["8081:8000"]
     env_file: [.env]
     volumes:
-      # The data catalogue and the lookup plans, owned by MCP-Server. The
-      # backend reads them to aim a search at the right index and field before
-      # any model runs — the one cross-repo file dependency, and it is
-      # read-only on this side.
-      - ${MCP_CATALOG_PATH:-../MCP-Server/Splunk/catalog}:/catalog:ro
+      # The data catalogue is not mounted: it is in the image (catalog/ ->
+      # /catalog, see the Dockerfile).
+      # The internal CA for Splunk, ThreatQ and Confluence, named by
+      # NODE_EXTRA_CA_CERTS in .env. Empty unless a PEM is put there.
+      - ./certs:/certs:ro
     depends_on:
       soc-db: {condition: service_healthy}
       soc-redis: {condition: service_healthy}
@@ -72,7 +74,7 @@ services:
       APP_ROLE: worker
     env_file: [.env]
     volumes:
-      - ${MCP_CATALOG_PATH:-../MCP-Server/Splunk/catalog}:/catalog:ro
+      - ./certs:/certs:ro
     depends_on:
       soc-db: {condition: service_healthy}
       soc-redis: {condition: service_healthy}

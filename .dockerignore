@@ -2,3 +2,7 @@ node_modules
 dist
 npm-debug.log
 .env
+
+# Raw Splunk exports (export_catalog): field names and example values from
+# real events. Reviewed into catalog/splunk-catalog.json, never shipped as-is.
+catalog/table

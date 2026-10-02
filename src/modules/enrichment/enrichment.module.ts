@@ -8,16 +8,16 @@ import { PlaybookSyncService } from './playbook-sync.service';
 import { PlaybookService } from './playbook.service';
 import { QueryPlanService } from './query-plan.service';
 import { SourceMapService } from './source-map.service';
-import { SplunkService } from './splunk.service';
+import { SplunkMcpService } from './splunk-mcp.service';
 import { ThreatQService } from './threatq.service';
 
 @Module({
   imports: [HttpModule],
   providers: [
     CatalogService, IocService, ThreatQService, SourceMapService, QueryPlanService,
-    SplunkService, PlaybookService, PlaybookSyncService,
+    SplunkMcpService, PlaybookService, PlaybookSyncService,
     EnrichmentService,
   ],
-  exports: [EnrichmentService, IocService, CatalogService, SplunkService, PlaybookService],
+  exports: [EnrichmentService, IocService, CatalogService, SplunkMcpService, PlaybookService],
 })
 export class EnrichmentModule {}

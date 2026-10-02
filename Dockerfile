@@ -19,6 +19,12 @@ RUN npm ci
 COPY . .
 RUN npx prisma generate && npm run build
 
+# The data catalogue and the lookup plans (catalog/), where the services look for
+# them (SPLUNK_CATALOG_FILE, LOOKUP_PLANS_FILE). Built in rather than mounted from
+# another repo, so a deploy carries the catalogue it was built with; change it by
+# committing to catalog/. See docs/splunk-catalog.md.
+COPY catalog/ /catalog/
+
 # Drop root: nothing in this service needs it at runtime.
 RUN chown -R node:node /app
 USER node

@@ -8,13 +8,15 @@
 #   postgresql+asyncpg://      ->  postgresql://          (Prisma, not SQLAlchemy)
 #   one .env for everything    ->  one per repo
 #
-# The last one needs saying out loud: the tokens the connectors check
-# (MCP_AUTH_TOKEN, THREATQ_MCP_AUTH_TOKEN, CONFLUENCE_MCP_AUTH_TOKEN) must be
-# byte-identical in this project and in MCP-Server, and AI_SERVICE_AUTH_TOKEN
-# in this project and in AI-Service. Set them as GROUP variables
+# The last one needs saying out loud: AI_SERVICE_AUTH_TOKEN must be
+# byte-identical in this project and in AI-Service. Set it as a GROUP variable
 # on Agentic-AI-for-Enhancing-SOC, not per project — two projects holding their
 # own copy is two copies that drift, and the failure is a 401 with nothing
-# saying why.
+# saying why. Everything else is this project's alone: the backend calls
+# ThreatQ (THREATQ_*), Confluence (CONFLUENCE_*) and Splunk's own MCP server
+# (SPLUNK_MCP_URL, SPLUNK_MCP_TOKEN) directly — MCP-Server is development-only
+# and not deployed, so MCP_AUTH_TOKEN is not needed here. SPLUNK_URL and
+# SPLUNK_TOKEN are read only by the manual export_catalog job.
 
 stages:
   - build
@@ -197,3 +199,66 @@ inspect_db_schema:
       allow_failure: true
   script:
     - sh scripts/inspect-db-schema.sh
+
+# ── Splunk data catalogue ────────────────────────────────────────────────────
+#
+# Reads Splunk and writes down what stage 1 needs to aim a requirement: which
+# indexes and sourcetypes exist and which fields each one carries. Never runs on
+# its own — press ▶ on it. It runs one search per sourcetype against a
+# production search head, and the catalogue changes when the estate does, not
+# per commit.
+#
+# Leaves an artifact, not a commit. catalog/table/ holds the raw export (field
+# names and up to three example values per field, from real events) and
+# catalog/table/splunk-catalog.json: the committed catalogue with the export
+# merged in — new sourcetypes marked TODO, guessed roles listed under
+# _review_roles, nothing anyone wrote overwritten. A person reads it, copies what
+# is right into catalog/splunk-catalog.json and commits; the next deploy builds
+# it into the image. See docs/splunk-catalog.md.
+#
+# Needs SPLUNK_URL (the management port, https://<search-head>:8089) and
+# SPLUNK_TOKEN as protected, masked CI variables. SPLUNK_TOKEN is an ordinary
+# Splunk authentication token for the backend's search-only service account —
+# the encrypted MCP token does not work outside MCP. The certificate is
+# verified; for an internal CA, put it in certs/ and set the CI variable
+# SSL_CERT_FILE=certs/<file>.pem.
+export_catalog:
+  stage: deploy
+  image: python:3.12
+  # Needs to reach Splunk's management port, which a shared runner cannot.
+  tags:
+    - soc-deploy
+  # Reads production; whoever may deploy to it is who may run this.
+  environment:
+    name: production
+    action: access
+  needs: []
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+      allow_failure: true
+  script:
+    - |
+      set -eu
+      : "${SPLUNK_URL:?set the CI variable SPLUNK_URL, e.g. https://splunk.internal:8089}"
+      : "${SPLUNK_TOKEN:?set the CI variable SPLUNK_TOKEN}"
+
+      # Into a staging directory, checked, and only then moved into place. An
+      # export that died partway is worse than none: a catalogue listing three of
+      # two hundred sourcetypes reads as a small estate, not a broken export.
+      SPLUNK_AUTH="Bearer $SPLUNK_TOKEN" SPLUNK_INSECURE=0 \
+      OUT="$CI_PROJECT_DIR/catalog-staging" \
+        python3 scripts/export_splunk_catalog.py
+      python3 scripts/verify_catalog_export.py "$CI_PROJECT_DIR/catalog-staging"
+      rm -rf catalog/table
+      mv "$CI_PROJECT_DIR/catalog-staging" catalog/table
+
+      # The committed catalogue with the export merged in, for review.
+      cp catalog/splunk-catalog.json catalog/table/splunk-catalog.json
+      python3 scripts/make_catalog_template.py catalog/table -o catalog/table/splunk-catalog.json
+  artifacts:
+    name: "splunk-catalog-${CI_COMMIT_SHORT_SHA}"
+    # Example values from real events: kept long enough to review, no longer.
+    expire_in: 7 days
+    paths:
+      - catalog/table/

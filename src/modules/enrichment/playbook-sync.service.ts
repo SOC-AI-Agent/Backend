@@ -16,14 +16,23 @@ export interface PlaybookSyncState {
   reused?: number;
 }
 
+/** One Confluence page as soc-ai indexes it: storage-format XHTML, unparsed. */
+export interface PlaybookPage {
+  id: string;
+  title: string;
+  version?: number;
+  url: string;
+  body: string;
+}
+
 /**
  * Keeps soc-ai's playbook index in step with Confluence.
  *
- * Every PLAYBOOK_SYNC_MINUTES the worker reads the space through the Confluence
- * connector (GET /pages — the connector holds the Confluence credentials) and
- * sends it whole to soc-ai (PUT /playbooks/index), which extracts the fields and
- * embeds only the ones whose text changed. A sync where nothing moved embeds
- * nothing, so running it hourly costs one read of the space.
+ * Every PLAYBOOK_SYNC_MINUTES the worker reads every current page of the space
+ * straight from Confluence's REST API and sends it whole to soc-ai
+ * (PUT /playbooks/index), which extracts the fields and embeds only the ones
+ * whose text changed. A sync where nothing moved embeds nothing, so running it
+ * hourly costs one read of the space. Read-only: nothing is written to Confluence.
  *
  * A failed sync changes nothing on soc-ai: it keeps serving the last index, and
  * PlaybookService says so on every match until a sync succeeds again.
@@ -45,10 +54,11 @@ export class PlaybookSyncService implements OnApplicationBootstrap, OnModuleDest
 
   onApplicationBootstrap(): void {
     if (process.env.APP_ROLE !== 'worker') return;
-    const { url, syncMinutes } = this.config.get('playbook');
-    if (!url) {
+    const { confluence, syncMinutes } = this.config.get('playbook');
+    if (!confluence.baseUrl || !confluence.apiToken || !confluence.spaceKey) {
       this.logger.warn(
-        'CONFLUENCE_MCP_URL is unset: playbooks are not synced, and every match will say nothing is indexed',
+        'CONFLUENCE_BASE_URL, CONFLUENCE_API_TOKEN or CONFLUENCE_SPACE_KEY is unset: playbooks ' +
+          'are not synced, and every match will say nothing is indexed',
       );
       return;
     }
@@ -74,15 +84,11 @@ export class PlaybookSyncService implements OnApplicationBootstrap, OnModuleDest
     if (this.running) return this.state;
     this.running = true;
 
-    const { url, token, syncTimeoutMs } = this.config.get('playbook');
+    const { confluence, syncTimeoutMs } = this.config.get('playbook');
     const ai = this.config.get('ai');
-    let step = `reading the pages from the Confluence connector (${url}/pages)`;
+    let step = `reading space ${confluence.spaceKey} from Confluence (${confluence.baseUrl})`;
     try {
-      const { data: space } = await firstValueFrom(
-        this.http.get<any>(`${url}/pages`, { timeout: syncTimeoutMs, headers: bearer(token) }),
-      );
-      const pages = Array.isArray(space?.pages) ? space.pages : null;
-      if (!pages) throw new Error('the connector answered without a pages list');
+      const pages = await this.readSpace(syncTimeoutMs);
 
       step = `indexing ${pages.length} page(s) in soc-ai (${ai.baseUrl}/playbooks/index)`;
       const { data: result } = await firstValueFrom(
@@ -121,5 +127,62 @@ export class PlaybookSyncService implements OnApplicationBootstrap, OnModuleDest
       this.running = false;
     }
     return this.state;
+  }
+
+  /**
+   * Every current page in the space, with its body.
+   *
+   * Paged through to the end rather than taking the first batch: a space that
+   * grew past one page of results would otherwise lose playbooks silently, and
+   * the alerts they cover would start reporting "no playbook". Throws rather
+   * than returning an empty list, which soc-ai would take for an empty space.
+   */
+  private async readSpace(timeoutMs: number): Promise<PlaybookPage[]> {
+    const { baseUrl, apiPath, spaceKey, email, apiToken, pageLimit } = this.config.get('playbook.confluence');
+    // Cloud: email + API token as basic auth. Server/DC: a personal access token as a bearer.
+    const authorization = email
+      ? `Basic ${Buffer.from(`${email}:${apiToken}`).toString('base64')}`
+      : `Bearer ${apiToken}`;
+
+    const raw: any[] = [];
+    for (let start = 0; ; ) {
+      const resp = await firstValueFrom(
+        this.http.get<any>(`${baseUrl}${apiPath}/content`, {
+          params: {
+            spaceKey, type: 'page', status: 'current',
+            expand: 'body.storage,version', limit: pageLimit, start,
+          },
+          headers: { Authorization: authorization, Accept: 'application/json' },
+          timeout: timeoutMs,
+          maxContentLength: Infinity,
+          validateStatus: () => true,
+        }),
+      );
+      if (resp.status === 401) throw new Error('Confluence rejected the credentials (401)');
+      if (resp.status === 403) throw new Error(`Confluence refused the read (403) — the account cannot see space ${spaceKey}`);
+      if (resp.status === 404) {
+        throw new Error(`space ${spaceKey} not found (404) — or CONFLUENCE_BASE_URL is missing a path such as /wiki`);
+      }
+      if (resp.status >= 400) throw new Error(`Confluence returned ${resp.status}`);
+      // A 200 is not proof of JSON: an SSO gateway in front of Confluence answers
+      // 200 with its login page.
+      const batch = resp.data?.results;
+      if (!Array.isArray(batch)) {
+        throw new Error('Confluence answered without a results list — is CONFLUENCE_BASE_URL behind a login page?');
+      }
+      raw.push(...batch);
+      if (batch.length < pageLimit) break;
+      start += batch.length;
+    }
+
+    return raw
+      .filter((p) => p && typeof p === 'object')
+      .map((p) => ({
+        id: String(p.id ?? ''),
+        title: p.title ?? '',
+        version: p.version?.number,
+        url: baseUrl + (p._links?.webui ?? ''),
+        body: p.body?.storage?.value ?? '',
+      }));
   }
 }

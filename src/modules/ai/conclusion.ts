@@ -6,16 +6,25 @@
  * model in the loop.
  */
 import { LookupAnswer } from '../queue/lookup-job.payload';
+import { requirementsFormat } from './requirements';
 
 /**
  * What the requirements agent is shown: the alert as stage 1 saw it, plus the
- * suggestion already written. It starts from what the suggestion says was not
- * determined, so it is given that text and not asked to work it out again.
+ * suggestion already written, then the shape of the answer — each question with
+ * the details from the alert that help find it (requirementsFormat). It starts
+ * from what the suggestion says was not determined, so it is given that text and
+ * not asked to work it out again.
  */
-export function buildRequirementsPrompt(rendered: string, suggestion: string): string {
-  return [rendered, '', '--- SUGGESTION ALREADY WRITTEN ---', suggestion, '--- END OF SUGGESTION ---'].join(
-    '\n',
-  );
+export function buildRequirementsPrompt(rendered: string, suggestion: string, limit = 5): string {
+  return [
+    rendered,
+    '',
+    '--- SUGGESTION ALREADY WRITTEN ---',
+    suggestion,
+    '--- END OF SUGGESTION ---',
+    '',
+    requirementsFormat(limit),
+  ].join('\n');
 }
 
 /** Room for the results in a prompt that also carries the alert and the suggestion. */

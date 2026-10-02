@@ -2,18 +2,19 @@
 
 เอกสารนี้สำหรับตอนผลค้น Splunk ดูผิด แล้วต้องหาว่าผิดตรงไหน
 
-Splunk ไม่ผ่าน MCP และ model ไม่ได้เขียนการค้น — Backend วางแผนจาก catalogue เขียน SPL เอง
-แล้วยิง connector (`soc-mcp-splunk`) ผ่าน HTTP ดังนั้นคำถามแรกคือ
-**"connector คืนค่าตรงที่เราคิดไหม"** ซึ่งตอบได้โดยไม่ต้องใช้ model เลย
+Stage 2 คุยกับ Splunk ผ่าน MCP: Backend ส่ง requirement เป็น**ข้อความ**ไปที่ `saia_generate_spl`
+(Text-to-SPL ของ Splunk) ได้ SPL กลับมา ตรวจด้วย [`spl-guard.ts`](../src/modules/enrichment/spl-guard.ts)
+แล้วรันด้วย `splunk_run_query` — dev ต่อ `soc-mcp-splunk` (mock) production ต่อ Splunk MCP Server app
+ดังนั้นคำถามแรกคือ **"MCP server คืน SPL และผลตรงที่เราคิดไหม"** ซึ่งตอบได้โดยไม่ต้องใช้ model ของเราเลย
 
 ---
 
 ## 3 ชั้นที่แยกทดสอบได้
 
 ```
-ชั้น 3   ขั้น Splunk ของ Backend   Backend วางแผน แล้วยิง connector  -> ตอบ "ทั้งระบบทำงานไหม"
-ชั้น 2   เรียก connector เอง       เราส่ง SPL เอง                    -> ตอบ "connector รันถูกไหม"
-ชั้น 1   ยิง Splunk ตรงๆ           เราเขียน SPL เอง                  -> ตอบ "SPL ที่ถูกคืออะไร"
+ชั้น 3   ขั้น Splunk ของ Backend   ทั้ง job: requirement -> SPL -> ผล    -> ตอบ "ทั้งระบบทำงานไหม"
+ชั้น 2   เรียก MCP เอง            ส่ง requirement ข้อความเดียว         -> ตอบ "Text-to-SPL เขียนอะไร รันได้อะไร"
+ชั้น 1   ยิง Splunk ตรงๆ           เราเขียน SPL เอง                      -> ตอบ "SPL ที่ถูกคืออะไร"
 ```
 
 ไล่จากล่างขึ้นบน เจอความต่างระหว่างชั้นไหน ปัญหาอยู่ชั้นนั้น
@@ -63,11 +64,24 @@ curl -sk -u "$SPLUNK_ADMIN:$SPLUNK_PW" -X POST "$SPLUNK/services/search/jobs" \
 
 ---
 
-## ชั้น 2 — เรียก connector เอง ไม่ใช้ Backend
+## ชั้น 2 — เรียก MCP เอง ไม่ผ่าน job
 
-Backend เขียน SPL เอง ([`spl.ts`](../src/modules/enrichment/spl.ts)) แล้วส่งไป `POST /query` ของ
-connector ซึ่ง **ตรวจซ้ำอีกรอบ** ([`check_query`](../../MCP-Server/Splunk/spl.py): อนุญาตเฉพาะ search ที่อ่านอย่างเดียว
-บน index ที่อยู่ใน allowlist) แล้วค่อยรัน ชั้นนี้คือการส่ง SPL เองเข้าไป
+สคริปต์นี้ใช้ทางเดียวกับ lookup ทุกอย่าง (config, network, CA ของ worker) — generate → ตรวจ → รัน
+และพิมพ์ prompt ที่ส่ง, SPL ที่รันจริง, และแถวที่ได้ (อ่านอย่างเดียว ไม่พิมพ์ token):
+
+```bash
+docker exec soc-core-worker node dist/scripts/splunk-mcp-check.js            # ต่อได้ไหม, tool ครบไหม
+docker exec soc-core-worker node dist/scripts/splunk-mcp-check.js "Which destinations did 10.1.100.11 talk to"
+```
+
+ข้อความที่เจอบ่อยและความหมาย อยู่ใน
+[MCP-Server/Splunk/README.md — Check it](../../MCP-Server/Splunk/README.md#5-check-it)
+
+### connector โหมด live — `POST /query` (ส่ง SPL เอง)
+
+`soc-mcp-splunk` ใน `SPLUNK_MODE=live` รับ SPL ที่เราเขียนเองที่ `POST /query` แล้ว**ตรวจ**
+([`check_query`](../../MCP-Server/Splunk/spl.py): อนุญาตเฉพาะ search ที่อ่านอย่างเดียว
+บน index ที่อยู่ใน allowlist) ก่อนรัน ใช้เทียบกับชั้น 1 ได้
 
 connector ไม่ publish port ออกนอก จึงต้องยิงจากใน network:
 
@@ -83,7 +97,7 @@ splunk() {   # splunk '<json>'
 }
 ```
 
-**search แบบที่ Backend เขียน — indicator หนึ่งตัวใน field ที่เก็บมัน**
+**search แบบอ่านอย่างเดียว — indicator หนึ่งตัวใน field ที่เก็บมัน**
 
 ```bash
 splunk '{"spl":"search index=\"main\" (srcip=\"10.1.100.11\" OR dstip=\"10.1.100.11\") | head 20"}'
@@ -98,12 +112,8 @@ splunk '{"spl":"search index=\"main\" (srcip=\"10.1.100.11\" OR dstip=\"10.1.100
 **ต่อ Splunk ได้ไหม** — `docker compose exec -T soc-mcp-splunk python check_connection.py`
 บอกว่าตกที่ขั้นไหน (`reach` / `auth` / `search`) ดู [Splunk/README.md](../../MCP-Server/Splunk/README.md)
 
-**index/sourcetype/field ที่ token นี้เห็นจริง** (ใช้ตอนเขียน catalogue)
-
-```bash
-docker run --rm --network soc-network curlimages/curl -s "http://soc-mcp-splunk:8200/catalog" \
-  -H "Authorization: Bearer $MCP_AUTH_TOKEN"
-```
+**index/sourcetype/field ที่ token เห็นจริง** (ใช้ตอนเขียน catalogue) — กด job `export_catalog`
+ใน CI ของ Backend ดู [splunk-catalog.md](splunk-catalog.md)
 
 **อ่านสถานะจาก HTTP code:** `400` = connector ปฏิเสธ SPL หรือ parameter (`error` บอกว่าเพราะอะไร),
 `502` = Splunk มีปัญหา (`error` คือเหตุผลของ Splunk: ต่อไม่ได้ / token ถูกปฏิเสธ / ไม่มีสิทธิ์ค้น),
@@ -114,9 +124,15 @@ docker run --rm --network soc-network curlimages/curl -s "http://soc-mcp-splunk:
 ## ชั้น 3 — ขั้น Splunk ของ Backend
 
 ขั้นแรกใช้ agent สองตัวต่อกัน (ไม่มีตัวไหนมี tool): `soc-suggest` เขียน suggestion แล้ว `soc-requirements`
-อ่าน suggestion กับ alert และเขียนว่าอยากถาม Splunk อะไร (ค่าละหนึ่งบรรทัด) จากนั้น Backend เอาแต่ละบรรทัดไป
-เทียบ catalogue เขียน SPL เอง ขั้นที่สองรันเมื่อ analyst กดปุ่ม (หรืออัตโนมัติถ้า `SPLUNK_LOOKUP_MODE=auto`)
+อ่าน suggestion กับ alert และเขียนว่าอยากถาม Splunk อะไร (ค่าละหนึ่งบรรทัด) Backend แนบ index/sourcetype
+ที่ catalogue บอกและช่วงเวลาของ alert ไว้ ขั้นที่สองรันเมื่อ analyst กดปุ่ม (หรืออัตโนมัติถ้า
+`SPLUNK_LOOKUP_MODE=auto`): แต่ละ requirement ถูกส่งเป็นข้อความไป Text-to-SPL ของ Splunk ผ่าน MCP
 แล้ว agent ตัวที่สาม `soc-conclude` อ่านผลค้นคู่กับ suggestion เขียนบทวิเคราะห์ (`SPLUNK_LOOKUP_ANALYSE=true`)
+
+ใน `splunk_requirements` ของแต่ละข้อ ดู:
+- `context` — รายละเอียดจาก alert ที่ agent เขียนใต้คำถาม (device, source, user, user_agent, …) ส่งไป Text-to-SPL
+- `droppedContext` — ค่าที่ agent เขียนแต่**ไม่มีอยู่ใน alert** ถูกตัดทิ้ง ถ้ามีบ่อย = model กำลังแต่งค่า ปรับ system prompt
+- `fieldHints` — ชื่อ field จาก catalogue ที่แนบไป (`FGT-01` → `devname`) ว่างทั้งหมด = catalogue ยังไม่มี role ของ sourcetype นี้
 
 ```bash
 # 1. ส่ง alert (API key) แล้วรอให้ขั้นแรกเสร็จ — ดู splunk_requirements ที่ job
@@ -131,6 +147,7 @@ j=json.load(sys.stdin)
 print(j['lookup_status'], j['lookup_time_ms'], 'ms')
 for i, a in enumerate(j['lookup_result'] or [], 1):
     print(f'[{i}]', a['requirement'][:70])
+    print('   prompt:', (a.get('prompt') or '').replace(chr(10), ' / '))
     print('   spl:', a.get('spl'), '| count:', a.get('count'), '| error:', a.get('error'))
     print('   where:', a.get('index'), a.get('sourcetype'), a.get('fields'))
 fa = j.get('final_analysis')
@@ -139,12 +156,14 @@ if fa: print(); print('analysis:', fa['status'], fa.get('error') or fa.get('reas
 
 ดูค่าเหล่านี้ในแต่ละ requirement:
 
-- `spl` — คำสั่งที่ Backend เขียนและ connector รันจริง เอาไปรันต่อใน Splunk ได้เลย (ทางสืบเชิงลึกที่เหลืออยู่คือคนทำต่อจากตรงนี้)
-- `index` / `sourcetype` / `fields` — สิ่งที่ Backend วางแผนจาก catalogue ถ้าผิดที่นี่ ให้แก้ catalogue
-- ข้อความ **`Not searched.`** — ไม่มีแผนที่แปลงเป็นการค้นได้ (ไม่มี field ใน catalogue สำหรับ indicator ชนิดนี้
-  หรือไม่มี index) ไม่ใช่ว่าค้นแล้วไม่เจอ เพิ่ม field ใน catalogue หรือรันเองใน Splunk
-- `error` — ค้นไม่สำเร็จ ถ้าเป็น `SPLUNK_ALLOWED_INDEXES is not set` แปลว่า `Backend/.env` ยังไม่ได้ตั้ง allowlist
-  (Backend เขียน SPL เอง และปฏิเสธทุกการค้นถ้ารายการว่าง) นอกนั้นไปดูชั้น 2 ด้วย HTTP code ข้างบน
+- `prompt` — ข้อความที่ส่งให้ Text-to-SPL: requirement, รายละเอียดจาก alert (`Details from the alert`),
+  index/sourcetype, ชื่อ field จาก catalogue (`Field names in this data`) และช่วงเวลา
+- `spl` — คำสั่งที่ Splunk เขียนและรันจริง (หลังเติมช่วงเวลา) เอาไปรันต่อใน Splunk ได้เลย ถ้า field ผิด
+  (เช่นใช้ชื่อ CIM ที่ log ดิบไม่มี) ผลจะว่าง ซึ่ง**ไม่ได้แปลว่าไม่มีเหตุการณ์**
+- `index` / `sourcetype` — hint ที่ Backend ได้จาก catalogue ถ้าผิดที่นี่ ให้แก้ catalogue
+- `error` — ค้นไม่สำเร็จ เช่น `SPLUNK_ALLOWED_INDEXES is not set` (`Backend/.env` ยังไม่ได้ตั้ง allowlist —
+  ปฏิเสธทุกการค้นถ้ารายการว่าง), `the generated SPL reads index '…'` (Text-to-SPL ค้นนอก allowlist — ถูกปฏิเสธก่อนรัน),
+  `cannot connect to Splunk's MCP server …` (network/CA/token) นอกนั้นไปดูชั้น 2
 
 `final_analysis` (จาก `soc-conclude`):
 
@@ -237,9 +256,8 @@ log ฝั่ง connector ควรมี:
 {"logger":"auth","msg":"rejected unauthenticated request from …"}
 ```
 
-ทุกข้อนี้มี test อัตโนมัติอยู่แล้วใน `MCP-Server/tests/` (`test_splunk_api.py`, `test_auth.py`) — คำสั่งด้านบนไว้ดูด้วยตา
-ส่วนฝั่ง Backend การเขียน SPL (`spl.ts`) ถูกเทียบกับ `spl.py` เดิม 38 กรณี (ทั้ง SPL ที่ได้และข้อความที่ปฏิเสธ)
-ตอนย้ายมา ให้ผลตรงกันทุกกรณี
+ทุกข้อนี้มี test อัตโนมัติอยู่แล้วใน `MCP-Server/tests/` (`test_splunk_api.py`, `test_splunk_mcp.py`, `test_auth.py`)
+— คำสั่งด้านบนไว้ดูด้วยตา
 
 ---
 

@@ -17,3 +17,7 @@ __pycache__/
 *.db
 *.sqlite3
 .DS_Store
+
+# Raw Splunk exports (export_catalog CI job): field names and example values
+# from real events. Review them into catalog/splunk-catalog.json instead.
+catalog/table/

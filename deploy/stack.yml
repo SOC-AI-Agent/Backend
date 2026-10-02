@@ -61,7 +61,7 @@ services:
     environment: {APP_ROLE: api}
     ports: ["8081:8000"]
     env_file: ["${REPOS:-..}/Backend/.env"]
-    volumes: ["${REPOS:-..}/MCP-Server/Splunk/catalog:/catalog:ro"]
+    volumes: ["./certs:/certs:ro"]
     depends_on:
       soc-db: {condition: service_healthy}
       soc-redis: {condition: service_healthy}
@@ -74,7 +74,7 @@ services:
     command: node dist/main.js
     environment: {APP_ROLE: worker}
     env_file: ["${REPOS:-..}/Backend/.env"]
-    volumes: ["${REPOS:-..}/MCP-Server/Splunk/catalog:/catalog:ro"]
+    volumes: ["./certs:/certs:ro"]
     depends_on:
       soc-db: {condition: service_healthy}
       soc-redis: {condition: service_healthy}
@@ -99,26 +99,11 @@ services:
     restart: unless-stopped
     networks: [soc-network]
 
-  # ── Connectors ──────────────────────────────────────────────────────────
+  # ── Splunk over MCP (mock until SPLUNK_MCP_URL names a real Splunk) ──────
+  # ThreatQ and Confluence have no service here: the backend calls them directly.
   soc-mcp-splunk:
     build: ${REPOS:-..}/MCP-Server/Splunk
     container_name: soc-mcp-splunk
-    env_file: ["${REPOS:-..}/MCP-Server/.env"]
-    volumes: ["${REPOS:-..}/MCP-Server/certs:/certs:ro"]
-    restart: unless-stopped
-    networks: [soc-network]
-
-  soc-mcp-threatq:
-    build: ${REPOS:-..}/MCP-Server/Threatq
-    container_name: soc-mcp-threatq
-    env_file: ["${REPOS:-..}/MCP-Server/.env"]
-    volumes: ["${REPOS:-..}/MCP-Server/certs:/certs:ro"]
-    restart: unless-stopped
-    networks: [soc-network]
-
-  soc-mcp-confluence:
-    build: ${REPOS:-..}/MCP-Server/Confluence
-    container_name: soc-mcp-confluence
     env_file: ["${REPOS:-..}/MCP-Server/.env"]
     volumes: ["${REPOS:-..}/MCP-Server/certs:/certs:ro"]
     restart: unless-stopped

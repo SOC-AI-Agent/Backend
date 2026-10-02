@@ -33,12 +33,14 @@ export interface LookupAnswer {
   sourcetype?: string;
   fields?: string[];
   /**
-   * Who ran it. Always 'backend' now: a planned search is sent straight to the
-   * connector and a requirement with no plan is not searched. 'agent' is what
-   * jobs stored before the query agent was removed still carry, so it stays in
-   * the type and the dashboard still reads it.
+   * Who wrote the search. 'splunk' now: the requirement goes to Splunk's
+   * Text-to-SPL over MCP and Splunk writes it. 'backend' (searches built from a
+   * plan) and 'agent' (the old query agent) are what older jobs carry, so they
+   * stay in the type and the dashboard still reads them.
    */
-  ranBy?: 'backend' | 'agent';
+  ranBy?: 'splunk' | 'backend' | 'agent';
+  /** The text sent to Text-to-SPL: the requirement, plus where and when to look. */
+  prompt?: string;
   /**
    * The search that actually ran, exactly as Splunk received it.
    *

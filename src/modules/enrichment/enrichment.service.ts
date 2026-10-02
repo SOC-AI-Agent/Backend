@@ -136,6 +136,11 @@ export class EnrichmentService {
         lines.push(`${clean} other indicator(s) checked with no record — unknown, not safe.`);
       }
     }
+    if (threatq.available && threatq.failed) {
+      lines.push(
+        `${threatq.failed} more indicator(s) NOT CHECKED — ${threatq.error}. Treat them as UNKNOWN.`,
+      );
+    }
     // The derived lookups are deliberately NOT shown here any more.
     //
     // They used to be, when an agent held ask_splunk and had to pick from

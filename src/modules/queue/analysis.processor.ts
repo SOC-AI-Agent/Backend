@@ -203,10 +203,16 @@ export class AnalysisProcessor extends WorkerHost {
     let asked: ReturnType<AnalysisProcessor['aim']> = [];
     try {
       requirementsRun = await this.ai.generate(
-        buildRequirementsPrompt(rendered, suggestion),
+        buildRequirementsPrompt(rendered, suggestion, maxRequirements),
         { agent: this.config.get<string>('ai.requirementsAgent') },
       );
-      asked = this.aim(parseRequirements(requirementsRun.response, known, maxRequirements), enrichment);
+      // A detail the agent lists is kept only if it appears in what the agent was
+      // shown: the alert, ThreatQ, the playbook and the suggestion.
+      const shown = `${rendered}\n${suggestion}`;
+      asked = this.aim(
+        parseRequirements(requirementsRun.response, known, maxRequirements, shown),
+        enrichment,
+      );
     } catch (err: any) {
       this.logger.warn(
         `Job ${jobId}: the requirements agent failed (${err?.message ?? err}) — ` +
@@ -257,15 +263,38 @@ export class AnalysisProcessor extends WorkerHost {
    */
   private aim(requirements: ModelRequirement[], enrichment: any) {
     const source = enrichment.source;
+    const window = this.window(enrichment.alertTime ?? new Date());
     return requirements.map((r) => {
+      // The details the agent listed under the question, and which field each
+      // one sits in here, when the catalogue knows. Both go to Text-to-SPL with
+      // the question.
+      const details = {
+        ...(r.context ? { context: r.context } : {}),
+        ...(r.droppedContext ? { droppedContext: r.droppedContext } : {}),
+      };
       if (!r.indicator || !r.indicatorType) {
         // Kept rather than dropped. A requirement naming nothing we extracted
         // is either about something outside the alert or invented, and an
-        // analyst should see which rather than watch it disappear.
-        return { requirement: r.requirement, because: r.unmatched, rank: 9, unscoped: true };
+        // analyst should see which rather than watch it disappear. Still sent
+        // with the alert's window, its details and where the alert came from.
+        const fieldHints = this.fieldHints(r, [], source?.index, source?.sourcetype);
+        return {
+          requirement: r.requirement,
+          because: r.unmatched,
+          rank: 9,
+          unscoped: true,
+          alertIndex: source?.index,
+          alertSourcetype: source?.sourcetype,
+          ...details,
+          ...(fieldHints.length ? { fieldHints } : {}),
+          ...window,
+        };
       }
       const where = this.catalog.resolveIndicator(
         r.indicatorType, source?.index, source?.sourcetype,
+      );
+      const fieldHints = this.fieldHints(
+        r, where.fields, where.index ?? source?.index, where.sourcetype ?? source?.sourcetype,
       );
       return {
         requirement: r.requirement,
@@ -280,9 +309,33 @@ export class AnalysisProcessor extends WorkerHost {
         scope: where.scope,
         fields: where.fields,
         unscoped: where.fields.length === 0,
-        ...this.window(enrichment.alertTime ?? new Date()),
+        ...details,
+        ...(fieldHints.length ? { fieldHints } : {}),
+        ...window,
       };
     });
+  }
+
+  /**
+   * Which field each value sits in, for Text-to-SPL: the indicator in the fields
+   * the catalogue resolved for it, and each detail whose key names a meaning the
+   * catalogue maps (`user`, `device`, `source`, ...). This is the part Text-to-SPL
+   * cannot know on its own — `srcip` here, not the CIM `src_ip`.
+   */
+  private fieldHints(
+    r: ModelRequirement,
+    indicatorFields: string[],
+    index?: string,
+    sourcetype?: string,
+  ): Array<{ value: string; fields: string[] }> {
+    const hints: Array<{ value: string; fields: string[] }> = [];
+    if (r.indicator && indicatorFields.length) hints.push({ value: r.indicator, fields: indicatorFields });
+    for (const [key, value] of Object.entries(r.context ?? {})) {
+      if (hints.some((h) => h.value === value)) continue;
+      const fields = this.catalog.fieldsForDetail(key, value, index, sourcetype);
+      if (fields.length) hints.push({ value, fields });
+    }
+    return hints;
   }
 
   /** The window every search is anchored to: around the alert, not around now. */

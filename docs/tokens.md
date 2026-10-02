@@ -10,8 +10,11 @@
 ## ภาพรวม — token มีกี่ตัว ใครถืออะไร
 
 ```
-soc-ai ──MCP_AUTH_TOKEN──────────► soc-mcp-splunk ──SPLUNK_TOKEN──────► Splunk
-       ──THREATQ_MCP_AUTH_TOKEN──► soc-mcp-threatq ─THREATQ_TOKEN/OAuth► ThreatQ
+soc-core-worker ──SPLUNK_MCP_TOKEN──────► Splunk MCP Server app (production) ──► Splunk
+                ──MCP_AUTH_TOKEN────────► soc-mcp-splunk (development, mock)
+                ──THREATQ_TOKEN/OAuth───► ThreatQ REST API      (เรียกตรง)
+                ──CONFLUENCE_API_TOKEN──► Confluence REST API   (เรียกตรง)
+                ──AI_SERVICE_AUTH_TOKEN─► soc-ai
 
 FortiSOAR ──X-API-Key──► soc-core-api ──JWT_SECRET_KEY (เซ็น session)
 ```
@@ -20,8 +23,8 @@ FortiSOAR ──X-API-Key──► soc-core-api ──JWT_SECRET_KEY (เซ็�
 
 | กลุ่ม | ทำหน้าที่ | ใครออกให้ |
 | --- | --- | --- |
-| `*_MCP_AUTH_TOKEN` | คุมว่า**ใครเรียก MCP server ของเราได้** | คุณสุ่มเอง |
-| `SPLUNK_TOKEN`, `THREATQ_*` | เอาไว้ให้ **MCP server ของเราเข้าระบบปลายทาง** | ระบบปลายทางออกให้ |
+| `MCP_AUTH_TOKEN`, `AI_SERVICE_AUTH_TOKEN` | คุมว่า**ใครเรียก service ของเราได้** | คุณสุ่มเอง |
+| `SPLUNK_MCP_TOKEN`, `THREATQ_*`, `CONFLUENCE_*` | ให้ **Backend เข้าระบบปลายทาง** | ระบบปลายทางออกให้ |
 
 ---
 
@@ -37,19 +40,20 @@ openssl rand -hex 32
 
 > ⚠️ เปลี่ยนค่านี้ = **session ที่ล็อกอินอยู่หลุดหมด** ทุกคนต้องล็อกอินใหม่
 
-### `MCP_AUTH_TOKEN` — สำหรับ `soc-mcp-splunk`
-
-### `THREATQ_MCP_AUTH_TOKEN` — สำหรับ `soc-mcp-threatq`
+### `MCP_AUTH_TOKEN` — สำหรับ `soc-mcp-splunk` (development)
 
 ```bash
-openssl rand -hex 32   # รันแยกกัน คนละค่า
+openssl rand -hex 32
 ```
 
-**ทำไมต้องแยกคนละตัว** — connector หลุดตัวเดียวไม่ควรเปิดทั้งสองระบบ
-ถ้าใช้ค่าเดียวกัน คนที่ได้ shell ใน `soc-mcp-splunk` จะยิง ThreatQ ได้ด้วย
+ใส่ค่าเดียวกันใน `Backend/.env` และ `MCP-Server/.env` — ใช้เฉพาะตอนต่อ mock
+(`SPLUNK_MCP_TOKEN` ว่าง) production ไม่ใช้ตัวนี้
 
-**ทำไมต้องมี** — connector พวกนี้ไม่ publish port ออกนอกเครื่อง แต่ทุก container
-ใน `soc-network` ยิงถึงได้ ไม่มี token = ใครอยู่ในเน็ตเวิร์กนั้นก็ query Splunk ได้ฟรี
+**ทำไมต้องมี** — `soc-mcp-splunk` ไม่ publish port ออกนอกเครื่อง แต่ทุก container
+ใน `soc-network` ยิงถึงได้ ไม่มี token = ใครอยู่ในเน็ตเวิร์กนั้นก็ query ได้ฟรี
+
+(`THREATQ_MCP_AUTH_TOKEN` และ `CONFLUENCE_MCP_AUTH_TOKEN` เลิกใช้แล้ว — Backend เรียก
+ThreatQ/Confluence ตรง ไม่มี connector ตรงกลาง)
 
 ### `AI_SERVICE_AUTH_TOKEN` — สำหรับ `soc-ai`
 
@@ -88,8 +92,29 @@ admin คนแรกสร้างเองตาม [setup.md ข้อ 4](se
 
 ---
 
-## 2. `SPLUNK_TOKEN` — เอามาจาก Splunk
+## 2. Splunk
 
+### `SPLUNK_MCP_TOKEN` — production
+
+Backend คุยกับ **Splunk MCP Server app** บน search head โดยตรง token ตัวนี้**ออกจากในแอป
+Splunk MCP Server** (encrypted token ใช้ได้กับ MCP เท่านั้น แสดงครั้งเดียว) ให้ service account
+ที่มี role ค้นได้อย่างเดียว + `mcp_tool_execute` ขั้นตอนครบ (แอปที่ต้องติดตั้ง, role, network,
+CA, การตรวจ) อยู่ที่
+[MCP-Server/Splunk/README.md — Production](../../MCP-Server/Splunk/README.md#production-connecting-to-splunk)
+
+```bash
+SPLUNK_MCP_URL=https://<search-head>:8089/services/mcp
+SPLUNK_MCP_TOKEN=<encrypted token>      # GitLab CI variable, masked + protected
+SPLUNK_ALLOWED_INDEXES=<index ของ SOC>  # ชุดเดียวกับที่ role อ่านได้
+NODE_EXTRA_CA_CERTS=/certs/<ca>.pem     # ถ้า 8089 ใช้ cert ภายใน/self-signed
+```
+
+### `SPLUNK_TOKEN` — สำหรับ job `export_catalog` (CI)
+
+token **ธรรมดา** (ไม่ใช่ encrypted token ของ MCP) ของ service account เดียวกัน ใช้เฉพาะตอนกด
+`export_catalog` เพื่อดึง catalogue ([splunk-catalog.md](splunk-catalog.md)) — ตั้งเป็น CI variable
+`SPLUNK_TOKEN` คู่กับ `SPLUNK_URL` ใน project Backend (protected + masked) ไม่ได้อยู่ใน `.env`
+ของ service ใดๆ (connector `soc-mcp-splunk` โหมด live ก็ใช้ชื่อนี้ แต่ connector ใช้เฉพาะตอน dev)
 Splunk ใช้ JWT ที่ต้องเปิด token auth ก่อน
 
 ### ทางหน้าเว็บ
@@ -130,10 +155,11 @@ SPL ไม่ใช่ภาษาอ่านอย่างเดียว —
 token ต้องผูกกับ role ที่:
 - ค้นได้อย่างเดียว
 - เข้าได้เฉพาะ index ที่ต้องใช้จริง
-- **ถอด capability `delete_by_keyword` และ `run_script` ออก**
+- **ไม่มี capability `delete_by_keyword`, `run_collect`, `run_mcollect`, `run_dump`, `run_sendalert`, `output_file`, `run_custom_command`** (ชื่อตาม [authorize.conf](https://help.splunk.com/en/data-management/splunk-enterprise-admin-manual/10.4/configuration-file-reference/10.4.0-configuration-file-reference/authorize.conf) — ไม่มี capability ชื่อ `run_script`)
 
-ชั้น [`spl.py`](../mcp-server/Splunk/spl.py) กันการแต่ง SPL ไว้อีกชั้น (ทดสอบแล้วว่ากันได้จริง)
-แต่ defence in depth ต้องมีสองชั้น ชั้น token คือชั้นที่สอง
+SPL ที่ Text-to-SPL เขียนถูกตรวจโดย [`spl-guard.ts`](../src/modules/enrichment/spl-guard.ts)
+ก่อนส่งรัน และ Splunk MCP Server มี guardrail ของตัวเอง แต่ defence in depth ต้องมีหลายชั้น
+ชั้น role ของ token คือชั้นที่ขาดไม่ได้
 
 ### ค่าอื่นที่มากับ Splunk
 
@@ -147,7 +173,8 @@ SPLUNK_VERIFY_SSL=true                            # false เฉพาะ lab �
 
 ## 3. ThreatQ
 
-เลือกได้ 2 แบบด้วย `THREATQ_AUTH_MODE`
+Backend เรียก ThreatQ REST API ตรง (อ่านอย่างเดียว: ขอ token + ค้น indicator)
+ตั้ง `THREATQ_BASE_URL` และเลือกได้ 2 แบบด้วย `THREATQ_AUTH_MODE`
 
 ### `oauth` (ค่า default) — OAuth2 password grant
 
@@ -159,8 +186,8 @@ THREATQ_PASSWORD=<รหัส service account>
 ```
 
 `client_id` หาได้จาก ThreatQ → **Settings → API / Integrations**
-ตัว connector จะขอ token เองที่ `POST /api/token` และต่ออายุให้อัตโนมัติ
-([`threatq_api.py`](../mcp-server/Threatq/threatq_api.py))
+Backend จะขอ token เองที่ `POST /api/token` และต่ออายุให้อัตโนมัติ
+([`threatq.service.ts`](../src/modules/enrichment/threatq.service.ts))
 
 ### `bearer` — token ตายตัว
 
@@ -169,14 +196,27 @@ THREATQ_AUTH_MODE=bearer
 THREATQ_TOKEN=<token>
 ```
 
-> ⚠️ ทั้งสองแบบ **ยังไม่ได้ทดสอบกับ ThreatQ จริง** — ดูตารางข้อสมมติใน
-> [`mcp-server/Threatq/README.md`](../mcp-server/Threatq/README.md) ว่าถ้าผิดต้องแก้ตรงไหน
+> ⚠️ ทั้งสองแบบ **ยังไม่ได้ทดสอบกับ ThreatQ จริง** — path และรูปแบบ body ตาม REST API
+> Reference v5.12 ถ้าไม่ตรงกับ deployment ปรับได้ที่ `THREATQ_TOKEN_PATH`, `THREATQ_SEARCH_PATH`
 
 ### สิทธิ์ของ account
 
-`THREATQ_ALLOW_WRITE=false` (ค่า default) กัน tool ที่เขียนข้อมูลไม่ให้ถูก republish
-แต่**โหมด `agent` ไม่ได้ถูกกันด้วยชั้นนี้** เพราะมันคุม tool ที่ gateway ส่งต่อ
-ไม่ได้คุม tool ที่ agent ของ ThreatQ เรียกเอง — ชั้นเดียวที่เหลือคือสิทธิ์ของ account
+ใช้ service account ที่**อ่าน indicator ได้อย่างเดียว** Backend ไม่เขียนอะไรกลับ ThreatQ
+
+---
+
+## 3.1 Confluence
+
+Backend (worker) อ่านทุกหน้าใน space playbook ตรงจาก REST API ทุก `PLAYBOOK_SYNC_MINUTES`
+
+```bash
+CONFLUENCE_BASE_URL=https://your-org.atlassian.net/wiki   # Server/DC: https://confluence.corp
+CONFLUENCE_SPACE_KEY=SOC
+CONFLUENCE_EMAIL=<อีเมล service account>   # Cloud — basic auth คู่กับ API token
+CONFLUENCE_API_TOKEN=<API token>            # Server/DC: personal access token, ปล่อย EMAIL ว่าง
+```
+
+ใช้ account ที่เห็นเฉพาะ space playbook และอ่านได้อย่างเดียว
 
 ---
 
@@ -219,11 +259,10 @@ python3 test_full_flow.py
 ```bash
 cp .env.example .env
 
-# สุ่ม 5 ค่า
+# สุ่ม 4 ค่า
 echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
 echo "JWT_SECRET_KEY=$(openssl rand -hex 32)"
-echo "MCP_AUTH_TOKEN=$(openssl rand -hex 32)"
-echo "THREATQ_MCP_AUTH_TOKEN=$(openssl rand -hex 32)"
+echo "MCP_AUTH_TOKEN=$(openssl rand -hex 32)"         # ค่าเดียวกันใน MCP-Server/.env (mock)
 echo "AI_SERVICE_AUTH_TOKEN=$(openssl rand -hex 32)"   # ค่าเดียวกันใน AI-Service/.env
 ```
 
@@ -234,11 +273,11 @@ echo "AI_SERVICE_AUTH_TOKEN=$(openssl rand -hex 32)"   # ค่าเดีย�
 | `POSTGRES_PASSWORD` + ใน `CORE_DATABASE_URL` | สุ่ม |
 | `JWT_SECRET_KEY` | สุ่ม |
 | `DEFAULT_ADMIN_PASSWORD` | สงวนไว้ ไม่ถูกอ่าน — ไม่ต้องตั้ง (ดูข้อ 1) |
-| `MCP_AUTH_TOKEN` | สุ่ม |
-| `THREATQ_MCP_AUTH_TOKEN` | สุ่ม |
+| `MCP_AUTH_TOKEN` | สุ่ม — ค่าเดียวกับใน `MCP-Server/.env` |
 | `AI_SERVICE_AUTH_TOKEN` | สุ่ม — ค่าเดียวกับใน `AI-Service/.env` |
-| `SPLUNK_TOKEN` + `SPLUNK_BASE_URL` + `SPLUNK_ALLOWED_INDEXES` | ข้อ 2 |
+| `SPLUNK_MCP_URL` + `SPLUNK_MCP_TOKEN` + `SPLUNK_ALLOWED_INDEXES` | ข้อ 2 (dev: ปล่อย token ว่าง ใช้ mock) |
 | `THREATQ_*` | ข้อ 3 |
+| `CONFLUENCE_*` | ข้อ 3.1 |
 
 แล้วขึ้นระบบ:
 
@@ -321,9 +360,10 @@ curl -sk -u admin:"$PW" -X POST \
 
 | token | ขั้นตอน |
 | --- | --- |
-| `MCP_AUTH_TOKEN` / `THREATQ_MCP_AUTH_TOKEN` | แก้ `.env` แล้ว `docker compose up -d` ตัวที่เกี่ยว (client กับ server อ่านค่าเดียวกัน ต้องขึ้นพร้อมกัน) |
-| `SPLUNK_TOKEN` | ลบ token เดิมใน Splunk → ออกใหม่ → แก้ `.env` → restart `soc-mcp-splunk` |
-| ThreatQ | เปลี่ยนรหัส service account หรือเพิกถอน token → แก้ `.env` → restart `soc-mcp-threatq` |
+| `MCP_AUTH_TOKEN` | แก้ `.env` ทั้ง Backend และ MCP-Server แล้ว `docker compose up -d` ทั้งสองฝั่ง |
+| `SPLUNK_MCP_TOKEN` | ออกใหม่ในแอป Splunk MCP Server → แก้ CI variable / `.env` → restart `soc-core-worker` (หลุด: แอปมีปุ่มเพิกถอน MCP token ทั้งหมด) |
+| `SPLUNK_TOKEN` | ลบ token เดิมใน Splunk → ออกใหม่ → แก้ CI variable `SPLUNK_TOKEN` ใน project Backend (ใช้แค่ `export_catalog` ไม่ต้อง restart อะไร) |
+| ThreatQ / Confluence | เปลี่ยนรหัส service account หรือเพิกถอน token → แก้ `.env` → restart `soc-core-worker` |
 | API Key ของ SOAR | หน้า API Keys → Revoke (มีผลทันที) แล้วออกใหม่ |
 | `JWT_SECRET_KEY` | แก้ `.env` → restart `soc-core-api` + `soc-core-worker` → **ทุก session หลุด** |
 

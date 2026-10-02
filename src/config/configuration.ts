@@ -83,14 +83,22 @@ export default () => ({
   },
   playbook: {
     /**
-     * Where the playbook pages come from: the Confluence connector, which holds
-     * the Confluence credentials. The worker reads its GET /pages every
-     * syncMinutes and sends the pages to soc-ai, which extracts, embeds and
-     * matches them. Unset means nothing is synced, and every match says nothing
-     * is indexed — a weaker suggestion, not a failure.
+     * Where the playbook pages come from: Confluence itself. The worker reads
+     * every current page of the space every syncMinutes and sends them to soc-ai,
+     * which extracts, embeds and matches them. Unset means nothing is synced, and
+     * every match says nothing is indexed — a weaker suggestion, not a failure.
      */
-    url: process.env.CONFLUENCE_MCP_URL ?? '',
-    token: process.env.CONFLUENCE_MCP_AUTH_TOKEN ?? '',
+    confluence: {
+      /** https://your-org.atlassian.net/wiki (Cloud) or https://confluence.corp (Server/DC). */
+      baseUrl: (process.env.CONFLUENCE_BASE_URL ?? '').replace(/\/+$/, ''),
+      /** Cloud is <base>/wiki/rest/api, so with /wiki in the base this stays /rest/api. */
+      apiPath: process.env.CONFLUENCE_API_PATH ?? '/rest/api',
+      spaceKey: process.env.CONFLUENCE_SPACE_KEY ?? '',
+      /** Cloud: email + API token as basic auth. Blank email: the token is a Server/DC PAT, sent as a bearer. */
+      email: process.env.CONFLUENCE_EMAIL ?? '',
+      apiToken: process.env.CONFLUENCE_API_TOKEN ?? '',
+      pageLimit: toInt(process.env.CONFLUENCE_PAGE_LIMIT, 200),
+    },
     /** One match, asked of soc-ai once per alert before the model runs. */
     timeoutMs: toInt(process.env.PLAYBOOK_TIMEOUT, 15) * 1000,
     syncMinutes: toInt(process.env.PLAYBOOK_SYNC_MINUTES, 60),
@@ -102,28 +110,44 @@ export default () => ({
   },
   splunk: {
     /**
-     * The Splunk connector's HTTP base. The backend builds every search itself
-     * (modules/enrichment/spl.ts) and sends the SPL to the connector's /query
-     * route, which runs it.
+     * Splunk's MCP endpoint. The Splunk stage sends each requirement as text to
+     * Text-to-SPL and runs the SPL that comes back (enrichment/splunk-mcp.service.ts).
+     * Development: the mock connector, MCP-Server/Splunk. Production: Splunk's own
+     * MCP Server app, https://<splunk>:8089/services/mcp. A bare base URL gets
+     * /services/mcp added.
      */
-    url: process.env.SPLUNK_MCP_URL ?? 'http://soc-mcp-splunk:8200',
-    token: process.env.MCP_AUTH_TOKEN ?? '',
+    mcpUrl: process.env.SPLUNK_MCP_URL ?? 'http://soc-mcp-splunk:8200/services/mcp',
     /**
-     * Which indexes a search may name, or "*" to opt out on purpose. Built into
-     * every query here, and checked again by the connector — set both the same.
-     * Empty refuses every search rather than searching everything.
+     * Bearer token for that endpoint. Production: a Splunk token created with
+     * audience "mcp". Development: the connector's MCP_AUTH_TOKEN, used when this
+     * is unset.
+     */
+    token: process.env.SPLUNK_MCP_TOKEN || process.env.MCP_AUTH_TOKEN || '',
+    /** Tool names, as Splunk's MCP Server publishes them. */
+    generateTool: process.env.SPLUNK_MCP_GENERATE_TOOL ?? 'saia_generate_spl',
+    queryTool: process.env.SPLUNK_MCP_QUERY_TOOL ?? 'splunk_run_query',
+    /** Which argument of the generate tool takes the request. Blank: read from the tool's schema. */
+    generateArg: process.env.SPLUNK_MCP_GENERATE_ARG ?? '',
+    /**
+     * Which indexes a generated search may read, or "*" to opt out on purpose.
+     * Checked here before the SPL is sent, and again by the mock connector. Empty
+     * leaves it to the Splunk role's own index access.
      */
     allowedIndexes: (process.env.SPLUNK_ALLOWED_INDEXES ?? '')
       .split(',')
       .map((i) => i.trim())
       .filter(Boolean),
-    /** Ceiling on rows, whatever a plan asks for. */
+    /** Ceiling on rows kept per requirement, whatever Splunk returns. */
     maxCount: toInt(process.env.SPLUNK_MAX_COUNT, 200),
-    /** Where correlation-search alerts land, and the field holding their name. Splunk ES defaults. */
+    /**
+     * Where fired alerts are, and the field holding an alert's name — told to
+     * Text-to-SPL for "how often has this alert fired". Splunk ES defaults; a
+     * plain Splunk install differs. The index must be in allowedIndexes.
+     */
     alertIndex: process.env.SPLUNK_ALERT_INDEX ?? 'notable',
     alertNameField: process.env.SPLUNK_ALERT_NAME_FIELD ?? 'search_name',
-    // A planned search is one Splunk call. The 0.4s measured here is typical;
-    // this is a ceiling on a slow search head, not a budget for inference.
+    // One MCP tool call. Text-to-SPL waits on Splunk AI Assistant, which takes
+    // tens of seconds; Splunk's own guardrail stops a search at one minute.
     timeoutMs: toInt(process.env.SPLUNK_SEARCH_TIMEOUT, 120) * 1000,
   },
   lookup: {
@@ -189,10 +213,24 @@ export default () => ({
       .map((v) => v.trim().toLowerCase())
       .filter(Boolean),
     threatq: {
-      // The ThreatQ gateway's HTTP lookup route. Blank disables enrichment,
-      // and the summary then says the check did not happen.
-      url: process.env.THREATQ_LOOKUP_URL ?? '',
-      token: process.env.THREATQ_MCP_AUTH_TOKEN ?? '',
+      // ThreatQ itself. Blank disables enrichment, and the summary then says
+      // the check did not happen.
+      baseUrl: (process.env.THREATQ_BASE_URL ?? '').replace(/\/+$/, ''),
+      // oauth: password grant at tokenPath, refreshed before it expires.
+      // bearer: a static API token, sent as it is.
+      authMode: (process.env.THREATQ_AUTH_MODE ?? 'oauth').toLowerCase() === 'bearer' ? 'bearer' : 'oauth',
+      tokenPath: process.env.THREATQ_TOKEN_PATH ?? '/api/token',
+      clientId: process.env.THREATQ_CLIENT_ID ?? '',
+      email: process.env.THREATQ_EMAIL ?? '',
+      password: process.env.THREATQ_PASSWORD ?? '',
+      token: process.env.THREATQ_TOKEN ?? '',
+      // Looking an indicator up by value is a search: GET /api/indicators has no
+      // value filter (REST API Reference v5.12).
+      searchPath: process.env.THREATQ_SEARCH_PATH ?? '/api/indicators/search',
+      // Score, sources and adversaries are related objects and are ABSENT unless
+      // named here. Without this every indicator comes back looking unscored.
+      searchWith: process.env.THREATQ_SEARCH_WITH ?? 'score,sources,adversaries,status,type,attributes',
+      // One request to ThreatQ.
       timeoutMs: Number.parseInt(process.env.THREATQ_LOOKUP_TIMEOUT_MS ?? '15000', 10),
       // One alert can carry dozens of addresses; looking up all of them costs
       // the platform more than the answer is worth.

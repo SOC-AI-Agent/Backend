@@ -27,14 +27,16 @@
 cp .env.example .env
 ```
 
-สุ่ม 4 ค่า:
+สุ่ม 3 ค่า:
 
 ```bash
 echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
 echo "JWT_SECRET_KEY=$(openssl rand -hex 32)"
 echo "MCP_AUTH_TOKEN=$(openssl rand -hex 32)"
-echo "THREATQ_MCP_AUTH_TOKEN=$(openssl rand -hex 32)"
 ```
+
+ThreatQ และ Confluence: ใส่ credential จริงใน `THREATQ_*` / `CONFLUENCE_*` (Backend เรียกตรง)
+ปล่อยว่างได้ — summary จะบอกว่า ThreatQ NOT CHECKED และ playbook ไม่ได้ sync
 
 > ⚠️ **`POSTGRES_PASSWORD` ต้องแก้ 2 ที่ให้ตรงกัน** — ตัวมันเองกับใน
 > `CORE_DATABASE_URL` ไม่งั้น Prisma ต่อไม่ติด (`P1000 Authentication failed`)
@@ -128,10 +130,53 @@ Backend เรียก agent 3 ตัว **ถ้าขาดตัวไหน
 | agent | ตั้งชื่อด้วย | ทำอะไร |
 | --- | --- | --- |
 | `soc-suggest` | `LLM_SUGGEST_AGENT` | อ่าน alert + ข้อมูลที่ Backend เตรียมไว้ (ThreatQ, playbook) เขียน suggestion — ขาดตัวนี้ job fail |
-| `soc-requirements` | `LLM_REQUIREMENTS_AGENT` | อ่านเหมือนกันพร้อม suggestion แล้วเขียนว่าอยากถาม Splunk อะไร — ขาดหรือพัง: ใช้แผนที่ Backend ได้จากตัวโค้ดแทน |
+| `soc-requirements` | `LLM_REQUIREMENTS_AGENT` | อ่านเหมือนกัน (alert + ThreatQ + playbook) พร้อม suggestion แล้วเขียนว่าอยากถาม Splunk อะไร พร้อมรายละเอียดจาก alert ใต้แต่ละคำถาม — ขาดหรือพัง: ใช้แผนที่ Backend ได้จากตัวโค้ดแทน |
 | `soc-conclude` | `LLM_CONCLUDE_AGENT` | หลังค้น Splunk เสร็จ อ่านผลค้นคู่กับ suggestion เขียนบทวิเคราะห์ — ขาดหรือพัง: ผลค้นยังอยู่ครบ ไม่มีบทวิเคราะห์ |
 
-การค้น Splunk เอง Backend เขียน SPL ส่งผ่าน connector ไม่ผ่าน agent
+การค้น Splunk ไม่ผ่าน agent: Backend ส่งแต่ละ requirement เป็นข้อความไป Text-to-SPL ของ Splunk
+ผ่าน MCP (`saia_generate_spl`) ตรวจ SPL ที่ได้ แล้วสั่งรัน (`splunk_run_query`)
+
+### รูปแบบคำตอบของ `soc-requirements`
+
+Backend ต่อท้าย prompt ทุกครั้งด้วย `--- ANSWER FORMAT ---` ([requirements.ts](../src/modules/ai/requirements.ts)
+`requirementsFormat`) จึงไม่ขึ้นกับ system prompt — agent ตอบแบบนี้:
+
+```
+1. What else did 45.83.122.9 touch in the 24 hours around the alert
+   source: 45.83.122.9
+   device: FGT-01
+   type: event
+   user_agent: FortiClient/7.2
+```
+
+- **บรรทัดคำถาม** ต้องมีค่าที่ extract จาก alert (IP, user, host, hash, domain) — Backend ใช้ค่านี้หา
+  index/sourcetype/field จาก catalogue
+- **รายละเอียด `key: value`** ใต้คำถาม (device, source, destination, domain, user, user_agent, type,
+  action, signature, …) ถูกส่งไป Text-to-SPL ด้วย ช่วยให้รู้ว่าคำถามเกี่ยวกับข้อมูลชุดไหน
+- **ค่าที่ไม่มีอยู่ในสิ่งที่ agent อ่าน ถูกตัดทิ้ง** (model เล็กชอบเติมค่าที่ดูสมเหตุสมผลแต่ไม่มีจริง)
+  และเก็บไว้ใน `droppedContext` หน้า job แสดงว่า "not in the alert, left out"
+- key ที่ catalogue รู้ความหมาย (`source`, `destination`, `user`, `device`/`host`, `domain`, `hash`,
+  `action`, …) ได้ชื่อ field ของ sourcetype นั้นแนบไปด้วย เช่น `FGT-01 is in devname`
+
+system prompt ที่แนะนำ (อย่ากำหนดรูปแบบคำตอบใน system prompt ให้ขัดกับ ANSWER FORMAT):
+
+```text
+You are a SOC analyst's assistant. You read one alert — the raw log, the threat
+intelligence (ThreatQ) results and the playbook for it — and the first-pass
+suggestion already written, and decide what still has to be asked of Splunk to
+confirm or rule out that suggestion.
+
+Ask only what the alert and the suggestion leave open. Each question names one
+value from the alert (an address, a user, a host, a hash or a domain) and says
+what to find out about it.
+
+Under each question, list the details from the alert that tell Splunk which data
+the question is about — device, source, destination, domain, user, user_agent,
+type, action, signature — copied exactly as they appear in the alert. Never
+invent a value, and leave out a detail the alert does not have.
+
+Answer in the ANSWER FORMAT given at the end of the message, and nothing else.
+```
 
 สร้างที่ Agent-Server (คนละระบบ, คนละ auth กับ dashboard นี้) — ไม่มีไฟล์ JSON ให้ import
 เหมือนเดิม เพราะ agent ของมันเก็บใน Postgres ของมันเอง:
@@ -235,15 +280,20 @@ curl -s localhost:8081/v1/results/<job_id> -H "X-API-Key: $KEY"
 
 ### Splunk
 
-Splunk อยู่นอก stack นี้ (ในเครือข่ายบริษัท) ตั้งใน `MCP-Server/.env` — ค่าที่ต้องขอจากทีม Splunk
-และวิธีเช็คว่าต่อสำเร็จอยู่ใน [MCP-Server/Splunk/README.md](../../MCP-Server/Splunk/README.md):
+Splunk อยู่นอก stack นี้ (ในเครือข่ายบริษัท) Backend คุยกับ **Splunk MCP Server app** ตรง —
+ตั้งใน `Backend/.env` สิ่งที่ต้องขอจากทีม Splunk (แอป, role, token, network, CA) และวิธีเช็คว่า
+ต่อสำเร็จอยู่ใน [MCP-Server/Splunk/README.md — Production](../../MCP-Server/Splunk/README.md#production-connecting-to-splunk)
 
 ```
-SPLUNK_BASE_URL=https://splunk.corp.example:8089   # management port ไม่ใช่ web 8000
-SPLUNK_TOKEN=
+SPLUNK_MCP_URL=https://splunk.corp.example:8089/services/mcp
+SPLUNK_MCP_TOKEN=                 # encrypted token จากแอป Splunk MCP Server
 SPLUNK_ALLOWED_INDEXES=
-SPLUNK_VERIFY_SSL=true
+NODE_EXTRA_CA_CERTS=              # /certs/<ca>.pem ถ้า 8089 ใช้ cert ภายใน
 ```
+
+catalogue (index/sourcetype/field) ดึงจาก Splunk ด้วย job `export_catalog` — [splunk-catalog.md](splunk-catalog.md)
+
+dev: ไม่มี Splunk ก็ได้ — ใช้ `soc-mcp-splunk` (`SPLUNK_MODE=mock` ใน `MCP-Server/.env`)
 
 ถ้ายังต่อ Splunk ของบริษัทไม่ได้ ใช้ image ทดสอบแทนได้ (เฉพาะเครื่อง dev):
 
@@ -290,7 +340,7 @@ playbook ยิง `POST /v1/analyze` พร้อม header `X-API-Key` แล�
 | เรื่อง | ทำอะไร |
 | --- | --- |
 | รหัส admin | เปลี่ยนที่หน้า Users ทันที |
-| `SPLUNK_TOKEN` | ต้องเป็น role **search-only** ถอด `delete_by_keyword` และ `run_script` |
+| `SPLUNK_MCP_TOKEN` / `SPLUNK_TOKEN` | role **search-only** ไม่มี `delete_by_keyword`, `run_collect`, `run_mcollect`, `run_dump`, `run_sendalert`, `output_file`, `run_custom_command` — ดู [MCP-Server/Splunk/README.md](../../MCP-Server/Splunk/README.md#2-service-account-role-and-token) |
 | `SPLUNK_VERIFY_SSL` | ต้องเป็น `true` (lab ตั้ง false) |
 | ThreatQ account | read-only |
 | `Agent-Server` | **ไม่มี auth บน `/v1/agents/...` เลย** (ยังไม่มีระบบ API key — ดู readme ของมัน "Known limitations") ใครถึง port 8000 ได้ก็เรียก agent ได้ฟรี ต้องอยู่หลัง reverse proxy หรือ firewall เฉพาะ `soc-ai` |

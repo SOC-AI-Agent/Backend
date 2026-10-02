@@ -59,6 +59,21 @@ export class SplunkRequirementResponse {
   @ApiPropertyOptional({ enum: ['playbook', 'sourcetype', 'index', 'estate', 'none'] })
   scope?: string;
 
+  /**
+   * Details from the alert the requirements agent listed under the question, sent
+   * to Text-to-SPL with it. Only values that appear in what the agent was shown.
+   */
+  @ApiPropertyOptional({ example: { source: '45.83.122.9', device: 'FGT-01', user: 'j.smith' } })
+  context?: Record<string, string>;
+
+  /** Details the agent wrote that appear nowhere in the alert, as `key: value` — not sent. */
+  @ApiPropertyOptional({ type: [String] })
+  droppedContext?: string[];
+
+  /** Which field each value sits in here, from the catalogue — sent to Text-to-SPL. */
+  @ApiPropertyOptional({ example: [{ value: '45.83.122.9', fields: ['srcip', 'dstip'] }] })
+  fieldHints?: Array<{ value: string; fields: string[] }>;
+
   /** True when the catalogue could not aim it at a field. */
   @ApiPropertyOptional()
   unscoped?: boolean;
@@ -116,9 +131,16 @@ export class LookupAnswerResponse {
   @ApiPropertyOptional({ type: [String] })
   fields?: string[];
 
-  /** `backend` for everything now. `agent` only on jobs stored before the query agent was removed. */
-  @ApiPropertyOptional({ enum: ['backend', 'agent'] })
+  /**
+   * Who wrote the search. `splunk` now: Splunk's Text-to-SPL, over MCP. `backend`
+   * (planned searches) and `agent` (the old query agent) only on older jobs.
+   */
+  @ApiPropertyOptional({ enum: ['splunk', 'backend', 'agent'] })
   ranBy?: string;
+
+  /** The text sent to Text-to-SPL: the requirement, plus where and when to look. */
+  @ApiPropertyOptional()
+  prompt?: string;
 
   /** The SPL that ran, exactly as sent. An answer is a claim; this is what makes it checkable. Absent when nothing was searched. */
   @ApiPropertyOptional()

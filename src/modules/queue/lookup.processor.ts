@@ -8,8 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AiService } from '../ai/ai.service';
 import { buildConclusionPrompt, parseConclusion } from '../ai/conclusion';
 import { AuditService } from '../audit/audit.service';
-import { CatalogService } from '../enrichment/catalog.service';
-import { SplunkService } from '../enrichment/splunk.service';
+import { SplunkMcpService, SplunkSession } from '../enrichment/splunk-mcp.service';
 import {
   FinalAnalysis,
   LOOKUP_QUEUE,
@@ -18,40 +17,36 @@ import {
   StoredLookup,
 } from './lookup-job.payload';
 
-/** The shape stage 1 stored: a question plus where in Splunk to ask it. */
+/** The shape stage 1 stored: a question, the alert's details for it, and where in Splunk to ask it. */
 interface PlannedLookup {
   requirement: string;
   indicator?: string;
   indicatorType?: string;
   index?: string;
   sourcetype?: string;
+  alertIndex?: string;
+  alertSourcetype?: string;
   fields?: string[];
-  /** A frequency check instead of an indicator pivot. */
+  context?: Record<string, string>;
+  fieldHints?: Array<{ value: string; fields: string[] }>;
+  filters?: Record<string, string>;
+  summarise?: { group_by?: string[]; metrics: Array<{ fn: string; field?: string }>; span?: string; sort?: string };
   frequencyOf?: string;
-  days?: number;
   earliest?: string;
   latest?: string;
-  filters?: Record<string, string>;
-  summarise?: {
-    group_by?: string[];
-    metrics: Array<{ fn: string; field?: string }>;
-    span?: string;
-    sort?: string;
-  };
 }
 
 /**
- * Stage 2: run the requirements stage 1 wrote down.
+ * Stage 2: ask Splunk the requirements stage 1 wrote down.
  *
- * Each one already carries its plan — the indicator, the fields that hold it in
- * this estate, the index and sourcetype — resolved from the data catalogue before
- * any model ran, so each is sent straight to the Splunk connector. No model is
- * involved. They run one after another rather than together so the load on Splunk
- * stays small and the progress is visible.
- *
- * A requirement that has no plan is not searched. It used to be handed to a query
- * agent to work out; it is now kept, with the reason, for a person to run. Silently
- * doing nothing would read as "nothing found", which is the wrong answer.
+ * Each requirement goes to Splunk as text, over MCP: Splunk's Text-to-SPL writes the
+ * search (saia_generate_spl), the backend checks it is read-only and inside the
+ * allowed indexes, and Splunk runs it (splunk_run_query). The details the
+ * requirements agent listed from the alert (device, source, user, ...), the index,
+ * sourcetype and field names the catalogue resolved, and the window ride along in
+ * the request (SplunkMcpService.promptFor). No model on this
+ * side is involved. They run one after another so the load on Splunk stays small and
+ * the progress is visible.
  *
  * Then, once the searches are in, a third agent reads them beside the suggestion
  * and writes the second reading (see FinalAnalysis). It has no tools, its failure
@@ -74,8 +69,7 @@ export class LookupProcessor extends WorkerHost {
     private readonly ai: AiService,
     private readonly config: ConfigService,
     private readonly audit: AuditService,
-    private readonly catalog: CatalogService,
-    private readonly splunk: SplunkService,
+    private readonly splunk: SplunkMcpService,
   ) {
     super();
   }
@@ -131,6 +125,18 @@ export class LookupProcessor extends WorkerHost {
       });
     };
 
+    // One MCP session for the whole lookup. If Splunk cannot be reached, every
+    // requirement is still written down, each with the reason, rather than the
+    // lookup failing with nothing to show.
+    let session: SplunkSession | undefined;
+    let connectError = '';
+    try {
+      session = await this.splunk.connect();
+    } catch (err: any) {
+      connectError = err?.message ?? String(err);
+      this.logger.error(`Lookup for ${jobId}: ${connectError}`);
+    }
+
     for (const [n, plan] of requirements.entries()) {
       const each = Date.now();
       this.logger.log(
@@ -138,124 +144,19 @@ export class LookupProcessor extends WorkerHost {
       );
       const where = { index: plan.index, sourcetype: plan.sourcetype, fields: plan.fields };
 
-      // A question this data cannot answer is not worth minutes of inference.
-      // When the catalogue is loaded and still names no field for this kind of
-      // indicator, the estate does not record it — the test estate's FortiGate
-      // logs carry IPs and no domain anywhere. Running it anyway meant falling
-      // back to CIM names, searching four fields that do not exist, and getting
-      // a confident "no related activity". The question is kept and the reason
-      // is written in its place, so the gap is visible rather than answered.
-      if (plan.indicatorType && !plan.fields?.length && this.catalog.loaded) {
-        this.logger.warn(
-          `Lookup for ${jobId}: skipping "${plan.requirement.slice(0, 60)}" — ` +
-            `no field carries a ${plan.indicatorType} in ${plan.index ?? 'this estate'}`,
-        );
-        answers.push({
-          requirement: plan.requirement,
-          answer:
-            `Not searched. The data catalogue names no field holding a ${plan.indicatorType} ` +
-            `in ${[plan.index, plan.sourcetype].filter(Boolean).join('/') || 'this estate'}, ` +
-            'so this cannot be answered from these logs. This is a gap in the catalogue or ' +
-            'in what is collected — not evidence that nothing happened.',
-          runId: null,
-          durationMs: 0,
-          error: null,
-          ...where,
-        });
-        await save();
-        continue;
-      }
-
       try {
-        // A plan with an indicator and the fields that carry it is already the
-        // search. Handing it to a query agent so it could emit those same
-        // parameters back as JSON measured 488s, of which Splunk used 0.409 —
-        // the model contributed the transcription and nothing else.
-        const planned = Boolean(
-          plan.frequencyOf ||
-            (plan.summarise && plan.index) ||
-            (plan.filters && plan.index) ||
-            (plan.indicator && plan.indicatorType && plan.fields?.length),
-        );
-        let result: { response: string; run_id?: string | null };
-        let spl: string | undefined;
-        let count: number | undefined;
-
-        if (plan.frequencyOf) {
-          const freq = await this.splunk.frequency(
-            plan.frequencyOf, plan.days ?? 7, plan.earliest, plan.latest,
-          );
-          result = { response: this.splunk.renderFrequency(freq), run_id: null };
-          spl = freq.spl;
-          count = freq.total;
-        } else if (plan.index && (plan.summarise || plan.filters)) {
-          // Grouped, not listed. The filter is the indicator sitting in the
-          // first field the catalogue gave for it — which is what makes this
-          // a summary *of this alert* rather than of the whole index.
-          const summary = await this.splunk.summarise({
-            index: plan.index,
-            sourcetype: plan.sourcetype,
-            // The playbook's own filters when it gave any, otherwise the
-            // indicator in the field the catalogue resolved for it.
-            filters:
-              plan.filters ??
-              (plan.indicator && plan.fields?.length
-                ? { [plan.fields[0]]: plan.indicator }
-                : undefined),
-            groupBy: plan.summarise?.group_by,
-            // No metrics means the playbook asked for events, not a count.
-            metrics: plan.summarise?.metrics ?? [{ fn: 'count' }],
-            span: plan.summarise?.span,
-            sort: plan.summarise?.sort,
-            earliest: plan.earliest,
-            latest: plan.latest,
-          });
-          result = { response: this.splunk.renderSummary(summary), run_id: null };
-          spl = summary.spl;
-          count = summary.count;
-        } else if (planned) {
-          const found = await this.splunk.search({
-            indicator: plan.indicator!,
-            indicatorType: plan.indicatorType!,
-            fields: plan.fields!,
-            index: plan.index,
-            sourcetype: plan.sourcetype,
-            earliest: plan.earliest,
-            latest: plan.latest,
-          });
-          result = { response: this.splunk.render(found), run_id: null };
-          spl = found.spl;
-          count = found.count;
-        } else {
-          // Nothing here can be turned into a search: no indicator with a field
-          // that carries it, no index to summarise, not a frequency check. Say so
-          // instead of guessing — the requirement is kept, and so is the reason.
-          answers.push({
-            requirement: plan.requirement,
-            answer:
-              'Not searched. The backend could not turn this requirement into a search — ' +
-              'it names no indicator the data catalogue has a field for, and no index to ' +
-              'summarise. Run it in Splunk by hand. This is not evidence that nothing ' +
-              'happened.',
-            runId: null,
-            durationMs: 0,
-            error: null,
-            ranBy: 'backend',
-            ...where,
-          });
-          await save();
-          continue;
-        }
-
+        if (!session) throw new Error(connectError);
+        const asked = await session.ask(plan);
         answers.push({
           requirement: plan.requirement,
-          answer: result.response,
-          runId: result.run_id ?? null,
+          answer: this.splunk.render(asked),
+          runId: null,
           durationMs: Date.now() - each,
           error: null,
-          ranBy: 'backend',
-          spl,
-          count,
+          ranBy: 'splunk',
+          prompt: asked.prompt,
+          spl: asked.spl,
+          count: asked.count,
           ...where,
         });
       } catch (err: any) {
@@ -269,12 +170,14 @@ export class LookupProcessor extends WorkerHost {
           runId: null,
           durationMs: Date.now() - each,
           error: message,
-          ranBy: 'backend',
+          ranBy: 'splunk',
+          prompt: this.splunk.promptFor(plan).prompt,
           ...where,
         });
       }
       await save();
     }
+    await session?.close().catch(() => undefined);
 
     const searchMs = Date.now() - startedAt;
     const failed = answers.filter((a) => a.error).length;

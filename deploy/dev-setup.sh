@@ -15,9 +15,9 @@
 # Safe to re-run: it refuses to overwrite an existing .env unless you pass
 # --force, so a machine already set up is not quietly reconfigured.
 #
-# What it cannot do is give you Splunk, ThreatQ or Confluence. Those connectors
-# refuse to start without real credentials — by design, because a connector
-# that starts without them would answer confidently about data it cannot see.
+# What it cannot do is give you ThreatQ or Confluence: the backend calls them
+# directly and needs real credentials in Backend/.env. Splunk runs as a mock
+# (MCP-Server/Splunk, SPLUNK_MODE=mock) until a real Splunk MCP Server is named.
 # What you get without them is described at the end.
 
 set -euo pipefail
@@ -39,8 +39,6 @@ gen() { openssl rand -hex 32; }
 # that break quietly when they drift: the connector checks the token the
 # backend sends, and a mismatch is a 401 with nothing saying why.
 MCP_TOKEN="$(gen)"
-THREATQ_TOKEN="$(gen)"
-CONFLUENCE_TOKEN="$(gen)"
 AI_TOKEN="$(gen)"
 JWT_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
 PG_PASSWORD="$(gen)"
@@ -72,8 +70,7 @@ write_env() {
 echo "Generating .env files"
 
 MCP_AUTH_TOKEN="$MCP_TOKEN" \
-THREATQ_MCP_AUTH_TOKEN="$THREATQ_TOKEN" \
-CONFLUENCE_MCP_AUTH_TOKEN="$CONFLUENCE_TOKEN" \
+SPLUNK_ALLOWED_INDEXES="main" \
 AI_SERVICE_AUTH_TOKEN="$AI_TOKEN" \
 JWT_SECRET_KEY="$JWT_SECRET" \
 POSTGRES_PASSWORD="$PG_PASSWORD" \
@@ -81,8 +78,6 @@ SPLUNK_LOOKUP_MODE="manual" \
   write_env Backend
 
 MCP_AUTH_TOKEN="$MCP_TOKEN" \
-THREATQ_MCP_AUTH_TOKEN="$THREATQ_TOKEN" \
-CONFLUENCE_MCP_AUTH_TOKEN="$CONFLUENCE_TOKEN" \
   write_env MCP-Server
 
 AI_SERVICE_AUTH_TOKEN="$AI_TOKEN" \
@@ -127,17 +122,15 @@ $AGENT_NOTE
 
 Not running, and why
 --------------------
-Splunk, ThreatQ and Confluence connectors need real credentials and refuse to
-start without them. That refusal is deliberate: a connector that started
-anyway would answer /lookup and /match confidently about data it has no
-access to, and nothing in the answer would say so.
+ThreatQ and Confluence are called by the backend directly, with the
+credentials in Backend/.env (THREATQ_*, CONFLUENCE_*). Left blank, the
+summary says ThreatQ was NOT CHECKED and every playbook match says nothing is
+indexed — weaker, and said out loud, rather than made up.
 
-deploy/dev.yml leaves them out. What you get is the full triage path up to the
-point where it would search: an alert arrives, indicators are extracted, the
-agent writes a suggestion, and the lookups it asks for sit on the job waiting
-for a button that cannot do anything yet.
+deploy/dev.yml leaves the Splunk MCP server out. To run stage 2 against mock
+data (SPLUNK_MODE=mock in MCP-Server/.env, the default there):
 
-To add one, put its credentials in MCP-Server/.env and bring it up:
+  cd ../MCP-Server && docker compose up -d --build soc-mcp-splunk
 
-  cd ../MCP-Server && docker compose up -d soc-mcp-splunk
+For a real Splunk, see MCP-Server/Splunk/README.md, "Production".
 EOF
