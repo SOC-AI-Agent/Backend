@@ -23,7 +23,6 @@ async function main(): Promise<void> {
   console.log(`endpoint       ${splunk.mcpUrl}`);
   console.log(`token          ${splunk.token ? `set (${splunk.token.length} chars)` : 'NOT SET'}`);
   console.log(`tools          ${splunk.generateTool}, ${splunk.queryTool}`);
-  console.log(`allowlist      ${splunk.allowedIndexes.join(', ') || 'EMPTY — every search will be refused'}`);
   console.log(`extra CA       ${process.env.NODE_EXTRA_CA_CERTS || 'none'}`);
 
   const service = new SplunkMcpService(config);

@@ -65,7 +65,7 @@ FortiSOAR ──► soc-core-api ──► BullMQ ──► worker
 **model ตัดสินใจเรื่องเดียว** — หลักฐานพอหรือยัง ต้องค้น log เพิ่มไหม
 
 **model ของเราไม่เขียน query** — stage 2 ส่ง requirement เป็นข้อความให้ Text-to-SPL
-ของ Splunk เขียน SPL แล้ว `spl-guard.ts` ตรวจก่อนรันทุกครั้ง (read-only, index ใน allowlist)
+ของ Splunk เขียน SPL แล้ว `spl-guard.ts` ตรวจก่อนรันทุกครั้ง (read-only — index ที่ค้นได้คุมด้วย role ของ token ใน Splunk)
 เพราะ SPL เขียนและลบข้อมูลได้ และ alert text เป็นของที่ผู้โจมตีแต่งได้ — role ของ token
 ใน Splunk ต้องเขียนไม่ได้อยู่ดี ดู [MCP-Server/Splunk/README.md](../../MCP-Server/Splunk/README.md)
 

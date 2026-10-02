@@ -161,9 +161,9 @@ if fa: print(); print('analysis:', fa['status'], fa.get('error') or fa.get('reas
 - `spl` — คำสั่งที่ Splunk เขียนและรันจริง (หลังเติมช่วงเวลา) เอาไปรันต่อใน Splunk ได้เลย ถ้า field ผิด
   (เช่นใช้ชื่อ CIM ที่ log ดิบไม่มี) ผลจะว่าง ซึ่ง**ไม่ได้แปลว่าไม่มีเหตุการณ์**
 - `index` / `sourcetype` — hint ที่ Backend ได้จาก catalogue ถ้าผิดที่นี่ ให้แก้ catalogue
-- `error` — ค้นไม่สำเร็จ เช่น `SPLUNK_ALLOWED_INDEXES is not set` (`Backend/.env` ยังไม่ได้ตั้ง allowlist —
-  ปฏิเสธทุกการค้นถ้ารายการว่าง), `the generated SPL reads index '…'` (Text-to-SPL ค้นนอก allowlist — ถูกปฏิเสธก่อนรัน),
-  `cannot connect to Splunk's MCP server …` (network/CA/token) นอกนั้นไปดูชั้น 2
+- `error` — ค้นไม่สำเร็จ เช่น `the generated SPL uses 'delete'…` (Text-to-SPL เขียนคำสั่งที่เขียน/ลบข้อมูล —
+  ถูกปฏิเสธก่อนรัน), `cannot connect to Splunk's MCP server …` (network/CA/token) นอกนั้นไปดูชั้น 2
+- ได้ 0 แถวจาก index ที่น่าจะมีข้อมูล — role ของ token ใน Splunk อาจไม่เห็น index นั้น (`srchIndexesAllowed`)
 
 `final_analysis` (จาก `soc-conclude`):
 

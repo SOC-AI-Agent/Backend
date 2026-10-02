@@ -128,21 +128,12 @@ export default () => ({
     queryTool: process.env.SPLUNK_MCP_QUERY_TOOL ?? 'splunk_run_query',
     /** Which argument of the generate tool takes the request. Blank: read from the tool's schema. */
     generateArg: process.env.SPLUNK_MCP_GENERATE_ARG ?? '',
-    /**
-     * Which indexes a generated search may read, or "*" to opt out on purpose.
-     * Checked here before the SPL is sent, and again by the mock connector. Empty
-     * leaves it to the Splunk role's own index access.
-     */
-    allowedIndexes: (process.env.SPLUNK_ALLOWED_INDEXES ?? '')
-      .split(',')
-      .map((i) => i.trim())
-      .filter(Boolean),
     /** Ceiling on rows kept per requirement, whatever Splunk returns. */
     maxCount: toInt(process.env.SPLUNK_MAX_COUNT, 200),
     /**
      * Where fired alerts are, and the field holding an alert's name — told to
      * Text-to-SPL for "how often has this alert fired". Splunk ES defaults; a
-     * plain Splunk install differs. The index must be in allowedIndexes.
+     * plain Splunk install differs.
      */
     alertIndex: process.env.SPLUNK_ALERT_INDEX ?? 'notable',
     alertNameField: process.env.SPLUNK_ALERT_NAME_FIELD ?? 'search_name',

@@ -199,8 +199,8 @@ curl -s -X POST localhost:8000/restful/agents -H "Authorization: Bearer $TOKEN" 
     "model_id":"<model uuid>","system_prompt":"<system prompt เดิม>"}'
 ```
 
-Backend ต้องตั้ง `SPLUNK_ALLOWED_INDEXES` ด้วย (ชุดเดียวกับ `MCP-Server/.env`) เพราะมันเป็นตัวเขียน SPL
-รายการว่าง = ปฏิเสธทุกการค้น
+Backend ไม่จำกัด index เอง — index ที่ค้นได้คุมด้วย role ของ token ใน Splunk (`srchIndexesAllowed`)
+ดู [MCP-Server/Splunk/README.md — Production](../../MCP-Server/Splunk/README.md#production-connecting-to-splunk)
 
 ---
 
@@ -287,7 +287,6 @@ Splunk อยู่นอก stack นี้ (ในเครือข่าย�
 ```
 SPLUNK_MCP_URL=https://splunk.corp.example:8089/services/mcp
 SPLUNK_MCP_TOKEN=                 # encrypted token จากแอป Splunk MCP Server
-SPLUNK_ALLOWED_INDEXES=
 NODE_EXTRA_CA_CERTS=              # /certs/<ca>.pem ถ้า 8089 ใช้ cert ภายใน
 ```
 

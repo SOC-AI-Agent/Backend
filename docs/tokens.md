@@ -105,7 +105,6 @@ CA, การตรวจ) อยู่ที่
 ```bash
 SPLUNK_MCP_URL=https://<search-head>:8089/services/mcp
 SPLUNK_MCP_TOKEN=<encrypted token>      # GitLab CI variable, masked + protected
-SPLUNK_ALLOWED_INDEXES=<index ของ SOC>  # ชุดเดียวกับที่ role อ่านได้
 NODE_EXTRA_CA_CERTS=/certs/<ca>.pem     # ถ้า 8089 ใช้ cert ภายใน/self-signed
 ```
 
@@ -161,11 +160,13 @@ SPL ที่ Text-to-SPL เขียนถูกตรวจโดย [`spl-gu
 ก่อนส่งรัน และ Splunk MCP Server มี guardrail ของตัวเอง แต่ defence in depth ต้องมีหลายชั้น
 ชั้น role ของ token คือชั้นที่ขาดไม่ได้
 
-### ค่าอื่นที่มากับ Splunk
+### ค่าอื่นของ connector `soc-mcp-splunk` โหมด live (dev เท่านั้น — อยู่ใน `MCP-Server/.env`)
+
+Backend ไม่จำกัด index เอง index ที่ค้นได้คุมด้วย `srchIndexesAllowed` ของ role ใน Splunk เท่านั้น
 
 ```bash
 SPLUNK_BASE_URL=https://splunk.example.com:8089   # management port ไม่ใช่ web (8000)
-SPLUNK_ALLOWED_INDEXES=main,notable               # allowlist, "*" = ปิดการจำกัด (ตั้งใจเท่านั้น)
+SPLUNK_ALLOWED_INDEXES=*                          # connector live mode บังคับให้ตั้ง; "*" = ไม่จำกัด
 SPLUNK_VERIFY_SSL=true                            # false เฉพาะ lab ที่ cert self-signed
 ```
 
@@ -275,7 +276,7 @@ echo "AI_SERVICE_AUTH_TOKEN=$(openssl rand -hex 32)"   # ค่าเดีย�
 | `DEFAULT_ADMIN_PASSWORD` | สงวนไว้ ไม่ถูกอ่าน — ไม่ต้องตั้ง (ดูข้อ 1) |
 | `MCP_AUTH_TOKEN` | สุ่ม — ค่าเดียวกับใน `MCP-Server/.env` |
 | `AI_SERVICE_AUTH_TOKEN` | สุ่ม — ค่าเดียวกับใน `AI-Service/.env` |
-| `SPLUNK_MCP_URL` + `SPLUNK_MCP_TOKEN` + `SPLUNK_ALLOWED_INDEXES` | ข้อ 2 (dev: ปล่อย token ว่าง ใช้ mock) |
+| `SPLUNK_MCP_URL` + `SPLUNK_MCP_TOKEN` | ข้อ 2 (dev: ปล่อย token ว่าง ใช้ mock) |
 | `THREATQ_*` | ข้อ 3 |
 | `CONFLUENCE_*` | ข้อ 3.1 |
 

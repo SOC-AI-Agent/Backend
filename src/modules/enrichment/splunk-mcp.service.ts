@@ -14,8 +14,9 @@ import { checkGeneratedSpl, toSplunkTime, withTimeWindow } from './spl-guard';
  * MCP server and nothing here changes. No model on this side calls them — the backend
  * does, one requirement at a time.
  *
- * Between the two calls the generated SPL is checked (spl-guard): read-only, allowed
- * indexes, and the alert's window if the SPL did not set one.
+ * Between the two calls the generated SPL is checked (spl-guard): read-only, and the
+ * alert's window added if the SPL did not set one. Which indexes it may read is the
+ * Splunk role's business.
  */
 
 /** What stage 1 stored for one requirement. */
@@ -205,7 +206,7 @@ export class SplunkMcpService {
   }
 
   async connect(): Promise<SplunkSession> {
-    const { token, timeoutMs, generateTool, generateArg, queryTool, allowedIndexes, maxCount } =
+    const { token, timeoutMs, generateTool, generateArg, queryTool, maxCount } =
       this.config.get('splunk');
     const url = this.endpoint();
     const client = new Client({ name: 'soc-backend', version: '1.0.0' });
@@ -251,7 +252,7 @@ export class SplunkMcpService {
         const { prompt, earliest, latest } = this.promptFor(q);
         const generated = splOf(await call(generateTool, { [promptArg]: prompt }));
         if (!generated) throw new Error(`${generateTool} returned no SPL for: ${prompt}`);
-        const spl = checkGeneratedSpl(withTimeWindow(generated, earliest, latest), allowedIndexes);
+        const spl = checkGeneratedSpl(withTimeWindow(generated, earliest, latest));
 
         const ran = await call(queryTool, { query: spl });
         const all = rowsOf(ran);

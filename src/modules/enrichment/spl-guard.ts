@@ -3,10 +3,14 @@
  *
  * In the Splunk stage the search comes from Splunk's own Text-to-SPL
  * (saia_generate_spl), not from code here, and it is run against production data.
- * Splunk's MCP Server has guardrails of its own; this is the same rule checked on
- * this side first, so a generated `| delete` or an index outside the allowlist is
- * refused before it is sent, whatever the far end would have done with it. The
- * connector (MCP-Server/Splunk spl.check_readonly) checks the same list.
+ * Splunk's MCP Server has guardrails of its own; this is the same idea checked on
+ * this side first, so a generated `| delete` or `| outputlookup` is refused before
+ * it is sent, whatever the far end would have done with it. The connector
+ * (MCP-Server/Splunk spl.check_readonly) checks the same list.
+ *
+ * Which indexes a search may read is not checked here: that is the Splunk role's
+ * job (srchIndexesAllowed on the backend's service account). A search that names
+ * no index reads the role's default indexes.
  */
 
 // Commands that write, delete, send data out or execute. A denylist, because
@@ -25,14 +29,10 @@ const FORBIDDEN_COMMANDS = new Set([
 ]);
 
 const QUOTED = /"(?:[^"\\]|\\.)*"/g;
-const INDEX_TERM = /\bindex\s*=\s*"?([^\s"|)\]]+)"?/gi;
 const MAX_LEN = 4000;
 
-/**
- * The search, if it is a read-only search over allowed indexes — scoped to them
- * when it names none. Throws with the reason otherwise.
- */
-export function checkGeneratedSpl(spl: string, allowedIndexes: string[]): string {
+/** The search, if it is read-only. Throws with the reason otherwise. */
+export function checkGeneratedSpl(spl: string): string {
   const query = (spl ?? '').trim();
   if (!query) throw new Error('Splunk returned no SPL');
   if (query.length > MAX_LEN) throw new Error(`the generated SPL is too long (${query.length} chars)`);
@@ -48,34 +48,8 @@ export function checkGeneratedSpl(spl: string, allowedIndexes: string[]): string
       throw new Error(`the generated SPL uses '${command}', which is not allowed in a read-only search`);
     }
   }
-
-  // An empty list must never fall through to "everything": "*" is the opt-out,
-  // and it has to be typed.
-  if (allowedIndexes.length === 0) {
-    throw new Error('SPLUNK_ALLOWED_INDEXES is not set, so no search is allowed — set it in Backend/.env');
-  }
-  if (isUnrestricted(allowedIndexes)) return query;
-
-  const named = [...query.matchAll(INDEX_TERM)].map(([, name]) => name);
-  for (const name of named) {
-    if (name.includes('*') || !allowedIndexes.includes(name)) {
-      throw new Error(`the generated SPL reads index '${name}'; permitted: ${allowedIndexes.join(', ')}`);
-    }
-  }
-  if (named.length > 0) return query;
-
-  // No index named: Splunk would search the role's default indexes, which may
-  // be wider than the allowlist. A plain search is scoped to it; anything else
-  // is refused, because where to put the scope in it is not obvious.
-  const scope =
-    allowedIndexes.length === 1
-      ? `index=${allowedIndexes[0]}`
-      : `(${allowedIndexes.map((i) => `index=${i}`).join(' OR ')})`;
-  if (/^search\s/i.test(query)) return query.replace(/^search\s+/i, `search ${scope} `);
-  throw new Error(`the generated SPL names no index; permitted: ${allowedIndexes.join(', ')}`);
+  return query;
 }
-
-const isUnrestricted = (allowed: string[]) => allowed.length === 1 && allowed[0] === '*';
 
 /**
  * A time for SPL's inline earliest=/latest=. They take relative times (-24h) or

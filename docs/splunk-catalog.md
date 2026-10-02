@@ -23,7 +23,7 @@ playbook ยังค้น index ที่มีอยู่จริงไห�
 และ `LOOKUP_PLANS_FILE` (default `/catalog/...`)
 
 ถ้าไม่มี catalogue ระบบไม่พัง — worker log `no catalog at …` requirement จะไม่มี index hint
-(Text-to-SPL เดาเอง `spl-guard` ยังจำกัดให้อยู่ใน `SPLUNK_ALLOWED_INDEXES`) และข้ามการตรวจ playbook
+(Text-to-SPL เดาเอง — ค้นได้เฉพาะ index ที่ role ของ token เห็น) และข้ามการตรวจ playbook
 
 ---
 
