@@ -131,5 +131,5 @@ data (SPLUNK_MODE=mock in MCP-Server/.env, the default there):
 
   cd ../MCP-Server && docker compose up -d --build soc-mcp-splunk
 
-For a real Splunk, see MCP-Server/Splunk/README.md, "Production".
+For a real Splunk, see Backend/docs/splunk-mcp.md.
 EOF

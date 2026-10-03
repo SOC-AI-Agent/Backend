@@ -74,8 +74,7 @@ docker exec soc-core-worker node dist/scripts/splunk-mcp-check.js            # �
 docker exec soc-core-worker node dist/scripts/splunk-mcp-check.js "Which destinations did 10.1.100.11 talk to"
 ```
 
-ข้อความที่เจอบ่อยและความหมาย อยู่ใน
-[MCP-Server/Splunk/README.md — Check it](../../MCP-Server/Splunk/README.md#5-check-it)
+ข้อความที่เจอบ่อยและความหมาย อยู่ใน [splunk-mcp.md](splunk-mcp.md) หัวข้อ 5
 
 ### connector โหมด live — `POST /query` (ส่ง SPL เอง)
 

@@ -5,13 +5,14 @@
 | **[setup.md](setup.md)** | ตั้งระบบตั้งแต่ศูนย์ |
 | **[tokens.md](tokens.md)** | token แต่ละตัวมาจากไหน ใส่ตรงไหน เปลี่ยนยังไง |
 | **[testing.md](testing.md)** | คำตอบของ agent ดูผิด ต้องหาว่าผิดตรงไหน |
+| **[splunk-mcp.md](splunk-mcp.md)** | ต่อ Backend กับ Splunk ตัวจริงผ่าน MCP — ติดตั้งแอป, token, network/certificate, ตรวจ |
 | **[splunk-catalog.md](splunk-catalog.md)** | เตรียม Splunk ก่อนใช้จริง — ดึง index/sourcetype/field มาให้ agent ค้นถูก |
 | **[restructure.md](restructure.md)** | อะไรเปลี่ยนไปบ้าง และทำไม |
 
 เอกสารของแต่ละ service อยู่ในโฟลเดอร์ของมันเอง:
 [backend](../backend/README.md) ·
 [ai-service](../ai-service/README.md) ·
-[MCP Splunk](../mcp-server/Splunk/README.md) ·
+[MCP Splunk (mock)](../../MCP-Server/Splunk/README.md) ·
 [MCP ThreatQ](../mcp-server/Threatq/README.md) ·
 [Agent-Server](../../Agent-Server/readme.md) (agent platform — repo แยก คนละ network, ดู `ai-service/README.md` หัวข้อ "Agent-Server")
 
@@ -27,6 +28,8 @@
 **agent ตอบว่า "ไม่พบอะไร" ทั้งที่รู้ว่ามีข้อมูล** → ชื่อ field ผิด
 [splunk-catalog.md](splunk-catalog.md) แล้วไล่ตรวจทีละชั้นด้วย
 [testing.md](testing.md)
+
+**จะต่อ Splunk ตัวจริง** (lab หรือ production) → [splunk-mcp.md](splunk-mcp.md)
 
 **จะเอาขึ้น production** → [setup.md ท้ายไฟล์](setup.md) กับ
 [tokens.md หัวข้อสิทธิ์](tokens.md)
@@ -67,7 +70,7 @@ FortiSOAR ──► soc-core-api ──► BullMQ ──► worker
 **model ของเราไม่เขียน query** — stage 2 ส่ง requirement เป็นข้อความให้ Text-to-SPL
 ของ Splunk เขียน SPL แล้ว `spl-guard.ts` ตรวจก่อนรันทุกครั้ง (read-only — index ที่ค้นได้คุมด้วย role ของ token ใน Splunk)
 เพราะ SPL เขียนและลบข้อมูลได้ และ alert text เป็นของที่ผู้โจมตีแต่งได้ — role ของ token
-ใน Splunk ต้องเขียนไม่ได้อยู่ดี ดู [MCP-Server/Splunk/README.md](../../MCP-Server/Splunk/README.md)
+ใน Splunk ต้องเขียนไม่ได้อยู่ดี ดู [splunk-mcp.md](splunk-mcp.md) หัวข้อ 2
 
 ---
 

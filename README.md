@@ -68,6 +68,25 @@ GET {AI_SERVICE_URL}/health  ->  { "status": "ok" }
 
 The AI service does not implement this yet — see `../ai-service/README.md`.
 
+## Splunk over MCP
+
+Stage 2 asks Splunk over MCP, and the worker is the MCP client: each requirement
+goes as text to `saia_generate_spl` (Splunk AI Assistant's Text-to-SPL), the SPL
+that comes back is checked by `spl-guard`, and `splunk_run_query` runs it
+(`src/modules/enrichment/splunk-mcp.service.ts`).
+
+| | Development | A real Splunk (lab or production) |
+| --- | --- | --- |
+| MCP server | the mock, `MCP-Server/Splunk` | Splunk's own MCP Server app |
+| `SPLUNK_MCP_URL` | `http://soc-mcp-splunk:8200/services/mcp` | `https://<splunk>:8089/services/mcp` |
+| `SPLUNK_MCP_TOKEN` | blank — `MCP_AUTH_TOKEN` is sent | the encrypted token from the MCP Server app |
+| `NODE_EXTRA_CA_CERTS` | — | the CA that signed the certificate on 8089 |
+
+A real Splunk needs two apps (MCP Server, AI Assistant with Agent Mode on), a
+search-only role and token, a network path, and a certificate for the name in the
+URL first. How, and how to check it:
+[docs/splunk-mcp.md](docs/splunk-mcp.md).
+
 ## Auth
 
 Unchanged from the FastAPI backend, so existing tokens, passwords and API keys
@@ -238,9 +257,9 @@ pytest                                   # no key: only the 401 checks run, the 
 the model. Jobs it creates are named `PYTEST-…` and age out with the rest.
 
 `docs/` covers the whole stack: `setup.md` to bring it up, `tokens.md` for
-which credential each service needs, `testing.md` for what to check when an
-answer looks wrong, and `restructure.md` for why the architecture is shaped the
-way it is.
+which credential each service needs, `splunk-mcp.md` to connect stage 2 to a real
+Splunk, `testing.md` for what to check when an answer looks wrong, and
+`restructure.md` for why the architecture is shaped the way it is.
 
 ## Running all four repos together
 
@@ -292,6 +311,8 @@ same network:
 ```bash
 cd ../MCP-Server && docker compose up -d soc-mcp-splunk
 ```
+
+That is the mock; for a real Splunk see [docs/splunk-mcp.md](docs/splunk-mcp.md).
 
 `deploy/stack.yml` is the version with all of them, for a machine that has
 those platforms. Neither file brings up Agent-Server — see the previous

@@ -99,8 +99,7 @@ admin คนแรกสร้างเองตาม [setup.md ข้อ 4](se
 Backend คุยกับ **Splunk MCP Server app** บน search head โดยตรง token ตัวนี้**ออกจากในแอป
 Splunk MCP Server** (encrypted token ใช้ได้กับ MCP เท่านั้น แสดงครั้งเดียว) ให้ service account
 ที่มี role ค้นได้อย่างเดียว + `mcp_tool_execute` ขั้นตอนครบ (แอปที่ต้องติดตั้ง, role, network,
-CA, การตรวจ) อยู่ที่
-[MCP-Server/Splunk/README.md — Production](../../MCP-Server/Splunk/README.md#production-connecting-to-splunk)
+CA, การตรวจ) อยู่ที่ [splunk-mcp.md](splunk-mcp.md)
 
 ```bash
 SPLUNK_MCP_URL=https://<search-head>:8089/services/mcp

@@ -200,7 +200,7 @@ curl -s -X POST localhost:8000/restful/agents -H "Authorization: Bearer $TOKEN" 
 ```
 
 Backend ไม่จำกัด index เอง — index ที่ค้นได้คุมด้วย role ของ token ใน Splunk (`srchIndexesAllowed`)
-ดู [MCP-Server/Splunk/README.md — Production](../../MCP-Server/Splunk/README.md#production-connecting-to-splunk)
+ดู [splunk-mcp.md](splunk-mcp.md) หัวข้อ 2
 
 ---
 
@@ -280,9 +280,9 @@ curl -s localhost:8081/v1/results/<job_id> -H "X-API-Key: $KEY"
 
 ### Splunk
 
-Splunk อยู่นอก stack นี้ (ในเครือข่ายบริษัท) Backend คุยกับ **Splunk MCP Server app** ตรง —
-ตั้งใน `Backend/.env` สิ่งที่ต้องขอจากทีม Splunk (แอป, role, token, network, CA) และวิธีเช็คว่า
-ต่อสำเร็จอยู่ใน [MCP-Server/Splunk/README.md — Production](../../MCP-Server/Splunk/README.md#production-connecting-to-splunk)
+Splunk อยู่นอก stack นี้ Backend คุยกับ **Splunk MCP Server app** ตรง โดยตั้งค่าใน `Backend/.env`
+ขั้นตอนทั้งหมด (ติดตั้งแอป, role, token, network, CA และวิธีเช็คว่าต่อสำเร็จ) อยู่ใน
+[splunk-mcp.md](splunk-mcp.md) ใช้ได้ทั้งกับ Splunk ของบริษัทและ Splunk ใน Offensive-Detection-Lab
 
 ```
 SPLUNK_MCP_URL=https://splunk.corp.example:8089/services/mcp
@@ -305,7 +305,8 @@ docker run -d --name soc-splunk \
   -p 8089:8089 -p 8001:8000 splunk/splunk:latest
 ```
 
-ขั้นตอนออก token และใส่ข้อมูลทดสอบ: [tokens.md](tokens.md) หัวข้อ 6
+ขั้นตอนออก token และใส่ข้อมูลทดสอบ: [tokens.md](tokens.md) หัวข้อ 6 — ถ้าจะใช้ stage 2 กับ Splunk
+ตัวนี้ ต้องติดตั้งแอปและทำ certificate ตาม [splunk-mcp.md](splunk-mcp.md) เหมือนกัน
 
 มีของจริงแล้ว — **ดึง catalog ก่อนใช้งาน** ไม่งั้น agent จะเดาชื่อ field ผิดแล้ว
 รายงานว่า "ไม่พบอะไร" อย่างมั่นใจ: [splunk-catalog.md](splunk-catalog.md)
@@ -339,7 +340,7 @@ playbook ยิง `POST /v1/analyze` พร้อม header `X-API-Key` แล�
 | เรื่อง | ทำอะไร |
 | --- | --- |
 | รหัส admin | เปลี่ยนที่หน้า Users ทันที |
-| `SPLUNK_MCP_TOKEN` / `SPLUNK_TOKEN` | role **search-only** ไม่มี `delete_by_keyword`, `run_collect`, `run_mcollect`, `run_dump`, `run_sendalert`, `output_file`, `run_custom_command` — ดู [MCP-Server/Splunk/README.md](../../MCP-Server/Splunk/README.md#2-service-account-role-and-token) |
+| `SPLUNK_MCP_TOKEN` / `SPLUNK_TOKEN` | role **search-only** ไม่มี `delete_by_keyword`, `run_collect`, `run_mcollect`, `run_dump`, `run_sendalert`, `output_file`, `run_custom_command` — ดู [splunk-mcp.md](splunk-mcp.md) หัวข้อ 2 |
 | `SPLUNK_VERIFY_SSL` | ต้องเป็น `true` (lab ตั้ง false) |
 | ThreatQ account | read-only |
 | `Agent-Server` | **ไม่มี auth บน `/v1/agents/...` เลย** (ยังไม่มีระบบ API key — ดู readme ของมัน "Known limitations") ใครถึง port 8000 ได้ก็เรียก agent ได้ฟรี ต้องอยู่หลัง reverse proxy หรือ firewall เฉพาะ `soc-ai` |
