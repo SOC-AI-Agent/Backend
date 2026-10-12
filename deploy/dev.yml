@@ -6,7 +6,7 @@
 # Expects the repos checked out side by side:
 #
 #   Backend/   <- you are here
-#   AI-Service/  Frontend/  MCP-Server/
+#   AI-Service/  Frontend/
 #
 # Set REPOS if they live elsewhere; every path goes through it — relative to
 # this directory (Backend/), because of --project-directory . above. Without
@@ -16,14 +16,15 @@
 # becomes Backend/AI-Service/... instead of AI-Service/'s real, sibling path —
 # missing one level up, and the first symptom is env_file: file not found.
 #
-# The three MCP connectors are not here. They refuse to start without real
-# Splunk, ThreatQ and Confluence credentials, and that refusal is the point —
-# one that started without them would answer confidently about data it cannot
-# reach. deploy/stack.yml is the version with everything, for a machine that
-# has those platforms.
+# No Splunk here. Stage 2 needs a Splunk MCP server: the development mock (the
+# MCP-Server repo, brought up with its own compose — dev-setup.sh says how) or
+# a real Splunk's MCP Server app (SPLUNK_MCP_URL, docs/splunk-mcp.md). ThreatQ
+# and Confluence are called by the backend directly, with the credentials in
+# Backend/.env.
 #
-# What works without them: an alert arrives, its indicators are extracted, the
-# agent writes a suggestion, and the searches it asks for wait on the job.
+# What works without Splunk: an alert arrives, its indicators are extracted and
+# checked, the agent writes a suggestion, and the searches it asks for wait on
+# the job.
 #
 # The agent platform (Agent-Server, ../Agent-Server) is not here either, on
 # purpose: it is its own stack, own Postgres, own compose, own network — not

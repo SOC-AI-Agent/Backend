@@ -263,8 +263,8 @@ Splunk, `testing.md` for what to check when an answer looks wrong, and
 
 ## Running all four repos together
 
-`deploy/stack.yml` brings up the whole SOC, expecting the other repos checked
-out beside this one. Each repo also runs alone with its own compose file.
+`deploy/stack.yml` brings up the whole SOC, expecting AI-Service and Frontend
+checked out beside this one. Each repo also runs alone with its own compose file.
 [Agent-Server](../Agent-Server/readme.md), the agent platform, is not part of
 this: it is a separate system on its own network, brought up with its own
 compose (see "What is not running, and why" below).
@@ -273,14 +273,19 @@ compose (see "What is not running, and why" below).
 docker compose -f deploy/stack.yml --project-directory . up -d --build
 ```
 
+The Splunk mock is off unless asked for with `--profile mock-splunk`, and only
+then needs the MCP-Server repo beside this one. It takes `MCP_AUTH_TOKEN` from
+`Backend/.env`, so it needs no `.env` of its own.
+
 ## Running the whole thing locally
 
-Check the four repos out side by side, plus
-[Agent-Server](../Agent-Server/readme.md), then:
+Check AI-Service and Frontend out beside this repo, plus
+[Agent-Server](../Agent-Server/readme.md) — and MCP-Server only if you want the
+Splunk mock — then:
 
 ```bash
 cd Backend
-./deploy/dev-setup.sh                            # writes .env in Backend, AI-Service, MCP-Server
+./deploy/dev-setup.sh                            # writes .env in Backend, AI-Service (and MCP-Server if present)
 docker compose -f deploy/dev.yml --project-directory . up -d --build   # http://localhost:3001
 
 cd ../Agent-Server
@@ -288,35 +293,35 @@ cp .env.example .env && docker compose up -d --build   # http://localhost:7100
 ```
 
 `dev-setup.sh` generates the secrets and writes them into every repo that needs
-them. Three of those — the tokens the connectors check — have to be identical
-in more than one file, and they are the ones that break quietly: a mismatch is
-a 401 with nothing saying why. Generating them once and writing them everywhere
-is the point of the script.
+them. Two of those — `AI_SERVICE_AUTH_TOKEN` and the mock's `MCP_AUTH_TOKEN` —
+have to be identical in more than one file, and they are the ones that break
+quietly: a mismatch is a 401 with nothing saying why. Generating them once and
+writing them everywhere is the point of the script.
 
 It refuses to overwrite an existing `.env`. Pass `--force` when you mean to.
+Run again, it writes only the `.env` files that are missing, with the tokens
+`Backend/.env` already holds — so cloning MCP-Server later and re-running it is
+enough.
 
 ### What is not running, and why
 
-`deploy/dev.yml` leaves out the Splunk, ThreatQ and Confluence connectors. They
-refuse to start without real credentials, and that refusal is deliberate — one
-that started anyway would answer confidently about data it cannot reach.
+ThreatQ and Confluence are not services here: the backend calls them directly,
+with the credentials in `Backend/.env` (`THREATQ_*`, `CONFLUENCE_*`). Left blank,
+the summary says ThreatQ was NOT CHECKED and every playbook match says nothing
+is indexed.
 
-What works without them is most of the path: an alert arrives, its indicators
-are extracted, the agent writes a suggestion, and the searches it asks for sit
-on the job waiting for a button that has nothing to call yet.
-
-To add one, put its credentials in `MCP-Server/.env` and bring it up on the
-same network:
+`deploy/dev.yml` has no Splunk. What works without it is most of the path: an
+alert arrives, its indicators are extracted, the agent writes a suggestion, and
+the searches it asks for sit on the job waiting for a button that has nothing
+to call yet. To give the button something to call, run the mock from the
+MCP-Server repo (made-up events, `dev-setup.sh` prints the commands):
 
 ```bash
-cd ../MCP-Server && docker compose up -d soc-mcp-splunk
+cd ../MCP-Server && docker compose up -d --build soc-mcp-splunk
 ```
 
-That is the mock; for a real Splunk see [docs/splunk-mcp.md](docs/splunk-mcp.md).
-
-`deploy/stack.yml` is the version with all of them, for a machine that has
-those platforms. Neither file brings up Agent-Server — see the previous
-section.
+— or point `SPLUNK_MCP_URL` at a real Splunk: [docs/splunk-mcp.md](docs/splunk-mcp.md).
+Neither compose file brings up Agent-Server — see the previous section.
 
 ---
 

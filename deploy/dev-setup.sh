@@ -4,20 +4,23 @@
 #
 #   ./deploy/dev-setup.sh
 #
-# Writes .env in Backend, AI-Service and MCP-Server, filling in generated
-# secrets and pointing the services at each other. Frontend needs no .env —
-# its proxy targets are baked into nginx.conf at build time.
+# Writes .env in Backend and AI-Service, filling in generated secrets and
+# pointing the services at each other — and in MCP-Server when it is checked
+# out, which only the Splunk mock needs. Frontend needs no .env — its proxy
+# targets are baked into nginx.conf at build time.
 #
 # Does not touch Agent-Server (../Agent-Server, the agent platform): it is a
 # separate system with its own .env and its own defaults that work as they
 # are — see AI-Service/README.md, "Agent-Server", for how the two connect.
 #
 # Safe to re-run: it refuses to overwrite an existing .env unless you pass
-# --force, so a machine already set up is not quietly reconfigured.
+# --force, so a machine already set up is not quietly reconfigured. A re-run
+# fills in only the .env files that are missing, with the tokens Backend/.env
+# already holds — so cloning MCP-Server later and running this again is enough.
 #
 # What it cannot do is give you ThreatQ or Confluence: the backend calls them
-# directly and needs real credentials in Backend/.env. Splunk runs as a mock
-# (MCP-Server/Splunk, SPLUNK_MODE=mock) until a real Splunk MCP Server is named.
+# directly and needs real credentials in Backend/.env. Splunk can run as a mock
+# (the MCP-Server repo, SPLUNK_MODE=mock) until a real Splunk MCP Server is named.
 # What you get without them is described at the end.
 
 set -euo pipefail
@@ -29,17 +32,31 @@ FORCE=0
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPOS="$(cd "$HERE/.." && pwd)"
 
-for r in Backend AI-Service MCP-Server; do
+for r in Backend AI-Service; do
   [ -d "$REPOS/$r" ] || { echo "cannot find $REPOS/$r — check the repos are checked out side by side"; exit 1; }
 done
+# Optional: only the Splunk mock lives there. A real Splunk needs none of it.
+HAVE_MCP=0
+[ -d "$REPOS/MCP-Server" ] && HAVE_MCP=1
 
 gen() { openssl rand -hex 32; }
 
+# What Backend/.env already holds for a key, when that file is being kept.
+kept() {
+  [ "$FORCE" = 0 ] && [ -f "$REPOS/Backend/.env" ] || return 0
+  sed -n "s/^$1=//p" "$REPOS/Backend/.env" | tail -n 1
+}
+
 # Generated once and written everywhere they are needed. These are the ones
-# that break quietly when they drift: the connector checks the token the
-# backend sends, and a mismatch is a 401 with nothing saying why.
-MCP_TOKEN="$(gen)"
-AI_TOKEN="$(gen)"
+# that break quietly when they drift: the server checks the token the
+# backend sends, and a mismatch is a 401 with nothing saying why. When
+# Backend/.env is kept, its tokens are reused rather than new ones generated:
+# a .env written now, beside one left alone, has to match what is already
+# being sent.
+MCP_TOKEN="$(kept MCP_AUTH_TOKEN)"
+MCP_TOKEN="${MCP_TOKEN:-$(gen)}"
+AI_TOKEN="$(kept AI_SERVICE_AUTH_TOKEN)"
+AI_TOKEN="${AI_TOKEN:-$(gen)}"
 JWT_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
 PG_PASSWORD="$(gen)"
 
@@ -76,8 +93,12 @@ POSTGRES_PASSWORD="$PG_PASSWORD" \
 SPLUNK_LOOKUP_MODE="manual" \
   write_env Backend
 
-MCP_AUTH_TOKEN="$MCP_TOKEN" \
-  write_env MCP-Server
+if [ "$HAVE_MCP" = 1 ]; then
+  MCP_AUTH_TOKEN="$MCP_TOKEN" \
+    write_env MCP-Server
+else
+  echo "  MCP-Server: not checked out, skipped — only the Splunk mock needs it"
+fi
 
 AI_SERVICE_AUTH_TOKEN="$AI_TOKEN" \
   write_env AI-Service
@@ -106,6 +127,16 @@ else
   set LLM_SERVER_URL in AI-Service/.env if it is not on this machine."
 fi
 
+if [ "$HAVE_MCP" = 1 ]; then
+  SPLUNK_NOTE="
+  cd ../MCP-Server && docker compose up -d --build soc-mcp-splunk"
+else
+  SPLUNK_NOTE="
+  git clone https://gitlab.com/agentic-soc/mcp-server.git ../MCP-Server
+  ./deploy/dev-setup.sh      # again: writes only MCP-Server/.env, with this token
+  cd ../MCP-Server && docker compose up -d --build soc-mcp-splunk"
+fi
+
 cat <<EOF
 
 Done. Bring the stack up with:
@@ -126,10 +157,9 @@ credentials in Backend/.env (THREATQ_*, CONFLUENCE_*). Left blank, the
 summary says ThreatQ was NOT CHECKED and every playbook match says nothing is
 indexed — weaker, and said out loud, rather than made up.
 
-deploy/dev.yml leaves the Splunk MCP server out. To run stage 2 against mock
-data (SPLUNK_MODE=mock in MCP-Server/.env, the default there):
+deploy/dev.yml has no Splunk. Stage 2 (the lookup button) needs a Splunk MCP
+server: either the development mock, which answers from made-up events —
+$SPLUNK_NOTE
 
-  cd ../MCP-Server && docker compose up -d --build soc-mcp-splunk
-
-For a real Splunk, see Backend/docs/splunk-mcp.md.
+— or a real Splunk's MCP Server app: see Backend/docs/splunk-mcp.md.
 EOF
