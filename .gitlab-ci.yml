@@ -138,10 +138,13 @@ deploy_production:
     DOCKER_TLS_CERTDIR: ""
   environment:
     name: production
-    # The address GitLab shows and links to. It is where the service actually
-    # answers, so it comes from a variable — localhost here would be a link to
-    # the runner, which is not where anyone reads this from.
-    url: '$BACKEND_URL'
+    # The address GitLab shows and links to: the one step 6 found answering,
+    # handed over in deploy.env.
+    url: '$DYNAMIC_ENVIRONMENT_URL'
+  # deploy.env holds that one URL and nothing else — never .env.
+  artifacts:
+    reports:
+      dotenv: deploy.env
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
   script:
@@ -318,15 +321,53 @@ deploy_production:
     # A deploy that finishes is not a deploy that works. Checked here so the
     # pipeline goes red rather than green-and-broken.
     - |
+      healthy=""
       for i in $(seq 1 30); do
         if docker compose exec -T soc-core-api curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
-          echo "healthy"; exit 0
+          healthy=yes; break
         fi
         sleep 4
       done
-      echo "the API did not become healthy within 2 minutes"
-      docker compose logs --tail 50 soc-core-api
-      exit 1
+      if [ -z "$healthy" ]; then
+        echo "the API did not become healthy within 2 minutes"
+        docker compose logs --tail 50 soc-core-api
+        exit 1
+      fi
+      echo "healthy inside the container"
+
+    - echo "========== 6. Address =========="
+    # Where the API answers from outside: what to give SOAR, and to open in a
+    # browser — asked for /health the way they will ask, at this host's address
+    # and the published port, so a port that is published but not reachable
+    # fails here too.
+    #
+    # The port is what Docker published for soc-core-api. The IP is the one
+    # this host sends from on its default route, read from a throwaway
+    # container on the host's network (this job's own container has another);
+    # the CI variable DEPLOY_HOST overrides it — a DNS name, or the address of
+    # another interface. Both throwaway containers are this job's image.
+    - |
+      port=$(docker compose port soc-core-api 8000 | sed -n '1s/.*://p')
+      host="${DEPLOY_HOST:-}"
+      if [ -z "$host" ]; then
+        host=$(docker run --rm --network host --entrypoint sh "$CI_JOB_IMAGE" -c '
+          { ip route get 1.1.1.1 2>/dev/null | sed -n "s/.* src \([0-9.]*\).*/\1/p"
+            ip -4 -o addr show scope global | grep -v -E " (docker0|br-|veth)" | sed -n "s/.* inet \([0-9.]*\).*/\1/p"
+          } | head -n 1')
+      fi
+      url="http://$host:$port"
+      echo "Backend API  $url"
+      echo "  health     $url/health"
+      echo "  docs       $url/docs"
+      echo "  SOAR       POST $url/v1/analyze"
+      if ! answer=$(docker run --rm --network host --entrypoint wget "$CI_JOB_IMAGE" -qO- -T 10 "$url/health"); then
+        echo "$url/health does not answer, though the API is healthy inside its container:"
+        echo "the port is published but not reachable at this address. Set DEPLOY_HOST if"
+        echo "clients reach this host by another name or interface."
+        exit 1
+      fi
+      echo "  answers    $answer"
+      echo "DYNAMIC_ENVIRONMENT_URL=$url/docs" > deploy.env
 
 # Prints the production database's tables, columns, enums, constraints,
 # indexes, Prisma migration history, and its drift from the deployed
