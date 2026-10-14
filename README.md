@@ -241,7 +241,7 @@ under five alerts are printed as candidates but not emitted as rules unless
 
 ## API docs (Swagger)
 
-`http://localhost:8081/docs` (also through the dashboard's nginx at `:3001/docs`); the OpenAPI document
+`http://localhost:8082/docs` (also through the dashboard's nginx at `:3002/docs`); the OpenAPI document
 itself is `/docs-json`. **Authorize** takes either credential — an API key for `X-API-Key`, or the
 `access_token` from `POST /auth/login` for Bearer — and every operation shows which one it needs, so
 Try it out sends it. The token survives a page reload.
@@ -274,7 +274,7 @@ SOC_API_KEY=<key> pytest -m "not e2e"    # request/auth/validation only, no wait
 pytest                                   # no key: only the 401 checks run, the rest skip
 ```
 
-`SOC_BASE_URL` (default `http://localhost:8081`) points it elsewhere;
+`SOC_BASE_URL` (default `http://localhost:8082`) points it elsewhere;
 `SOC_JOB_TIMEOUT` (default 300 s per job) is how long an `e2e` test waits for
 the model. Jobs it creates are named `PYTEST-…` and age out with the rest.
 

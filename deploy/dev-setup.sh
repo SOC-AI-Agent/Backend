@@ -118,7 +118,7 @@ name in Backend/.env) at that UI, or POST /restful/agents. Nothing here
 restores or checks them.
 
 soc-ai reaches it at AI-Service/.env's LLM_SERVER_URL
-(default: http://host.docker.internal:8000, which already assumes it runs
+(default: http://host.docker.internal:8001, which already assumes it runs
 on this machine)."
 else
   AGENT_NOTE="

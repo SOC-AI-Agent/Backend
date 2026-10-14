@@ -135,11 +135,11 @@ splunk '{"spl":"search index=\"main\" (srcip=\"10.1.100.11\" OR dstip=\"10.1.100
 
 ```bash
 # 1. ส่ง alert (API key) แล้วรอให้ขั้นแรกเสร็จ — ดู splunk_requirements ที่ job
-curl -s localhost:8081/v1/results/<job_id> -H "X-API-Key: $KEY" | python3 -m json.tool
+curl -s localhost:8082/v1/results/<job_id> -H "X-API-Key: $KEY" | python3 -m json.tool
 
 # 2. รันขั้น Splunk (JWT ของ user — ดู setup.md)
-curl -s -X POST localhost:8081/v1/jobs/<job_id>/lookup -H "Authorization: Bearer $JWT"
-curl -s localhost:8081/v1/jobs/<job_id> -H "Authorization: Bearer $JWT" \
+curl -s -X POST localhost:8082/v1/jobs/<job_id>/lookup -H "Authorization: Bearer $JWT"
+curl -s localhost:8082/v1/jobs/<job_id> -H "Authorization: Bearer $JWT" \
   | python3 -c "
 import json,sys
 j=json.load(sys.stdin)
@@ -291,10 +291,10 @@ curl -sk -u admin:"$PW" -X POST https://localhost:8089/services/search/jobs \
 
 ```bash
 docker compose ps
-curl -s localhost:8081/health    # core API  -> ai_service: up
+curl -s localhost:8082/health    # core API  -> ai_service: up
 docker exec soc-ai python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8100/health').read())"
                                  # ai-service -> llm_server: true (ไม่เปิด port แล้ว)
-curl -s localhost:8000/          # Agent-Server (คนละ stack, publish port ตรง) -> {"status": "ok"}
+curl -s localhost:8001/          # Agent-Server (คนละ stack, publish port ตรง) -> {"status": "ok"}
 docker compose exec soc-mcp-splunk python -c \
   "import urllib.request; print(urllib.request.urlopen('http://localhost:8200/health').read())"
                                  # connector  -> splunk: true

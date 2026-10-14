@@ -2,7 +2,7 @@
 
 These run against a live Backend — the same thing scripts/test_*.py did by hand.
 
-    SOC_BASE_URL      where the API is        (default http://localhost:8081)
+    SOC_BASE_URL      where the API is        (default http://localhost:8082)
     SOC_API_KEY       a key for X-API-Key     (tests that need one skip without it)
     SOC_JOB_TIMEOUT   seconds to wait for one job to finish   (default 300)
     SOC_POLL_INTERVAL seconds between polls                   (default 2)
@@ -17,7 +17,7 @@ import os
 import pytest
 import requests
 
-BASE_URL = os.environ.get("SOC_BASE_URL", "http://localhost:8081").rstrip("/")
+BASE_URL = os.environ.get("SOC_BASE_URL", "http://localhost:8082").rstrip("/")
 API_KEY = os.environ.get("SOC_API_KEY", "")
 REQUEST_TIMEOUT = 15
 

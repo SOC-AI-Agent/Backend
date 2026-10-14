@@ -9,7 +9,7 @@ if not API_KEY:
     sys.exit("set SOC_API_KEY — issue one on the API Keys page, or with "
              "POST /admin/api-keys using an admin JWT")
 
-url = os.environ.get("SOC_BASE_URL", "http://localhost:8081") + "/v1/analyze"
+url = os.environ.get("SOC_BASE_URL", "http://localhost:8082") + "/v1/analyze"
 headers = {
     "X-API-Key": API_KEY,
     "Content-Type": "application/json"

@@ -81,7 +81,7 @@ python script/add_admin_user.py --username admin --email admin@example.com --pas
 
 > ⚠️ `add_admin_user.py` เก็บรหัสเป็น plain text (ยังไม่ hash) — อย่าใช้รหัสที่ใช้จริงที่อื่น
 
-`AI-Service/.env`'s `LLM_SERVER_URL` (default `http://host.docker.internal:8000`)
+`AI-Service/.env`'s `LLM_SERVER_URL` (default `http://host.docker.internal:8001`)
 ชี้มาที่นี่แล้ว ถ้า Agent-Server รันอยู่เครื่องอื่นต้องแก้ค่านี้
 
 ---
@@ -197,11 +197,11 @@ system prompt ตามที่ตั้งใจไว้ในตัวเด
 หรือทาง API (ต้อง login เอา JWT ก่อน, และต้องรู้ `owner_id`/`model_id` เป็น UUID):
 
 ```bash
-TOKEN=$(curl -s -X POST localhost:8000/restful/auth/login -H 'Content-Type: application/json' \
+TOKEN=$(curl -s -X POST localhost:8001/restful/auth/login -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"<รหัส Agent-Server>"}' \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
 
-curl -s -X POST localhost:8000/restful/agents -H "Authorization: Bearer $TOKEN" \
+curl -s -X POST localhost:8001/restful/agents -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -d '{
     "slug":"soc-suggest","name":"soc-suggest","owner_id":"<user uuid>",
     "model_id":"<model uuid>","system_prompt":"<system prompt เดิม>"}'
@@ -215,10 +215,10 @@ Backend ไม่จำกัด index เอง — index ที่ค้นไ
 ## 6. ตรวจว่าขึ้นครบ
 
 ```bash
-curl -s localhost:8081/health    # ai_service: "up"
+curl -s localhost:8082/health    # ai_service: "up"
 docker exec soc-ai python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8100/health').read())"
                                  # llm_server: true, playbooks: จำนวนที่ index แล้ว
-curl -s localhost:8000/         # Agent-Server: {"status": "ok"} — ไม่มี /health รวม ollama/agents
+curl -s localhost:8001/         # Agent-Server: {"status": "ok"} — ไม่มี /health รวม ollama/agents
 docker compose exec soc-mcp-splunk python -c \
   "import urllib.request; print(urllib.request.urlopen('http://localhost:8200/health').read())"
 ```
@@ -246,15 +246,15 @@ container ที่ขาด token จะ **ไม่ยอมขึ้นเล
 ## 7. ยิง alert แรก
 
 ```bash
-JWT=$(curl -s -X POST localhost:8081/auth/login -H 'Content-Type: application/json' \
+JWT=$(curl -s -X POST localhost:8082/auth/login -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"<รหัส>"}' \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
 
-KEY=$(curl -s -X POST localhost:8081/admin/api-keys -H "Authorization: Bearer $JWT" \
+KEY=$(curl -s -X POST localhost:8082/admin/api-keys -H "Authorization: Bearer $JWT" \
   -H 'Content-Type: application/json' -d '{"name":"first-test"}' \
   | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('api_key') or d['key'])")
 
-curl -s -X POST localhost:8081/v1/analyze -H "X-API-Key: $KEY" \
+curl -s -X POST localhost:8082/v1/analyze -H "X-API-Key: $KEY" \
   -H 'Content-Type: application/json' -d '{
     "alert_id":"FIRST-001","alert_name":"test",
     "raw_log":"srcip=10.1.100.11 dstip=45.83.122.9 action=\"blocked\""}'
@@ -266,7 +266,7 @@ playbook เก่าที่ยังส่งมาไม่ error เฉย�
 ได้ `job_id` แล้ว poll:
 
 ```bash
-curl -s localhost:8081/v1/results/<job_id> -H "X-API-Key: $KEY"
+curl -s localhost:8082/v1/results/<job_id> -H "X-API-Key: $KEY"
 ```
 
 ---
@@ -277,9 +277,9 @@ curl -s localhost:8081/v1/results/<job_id> -H "X-API-Key: $KEY"
 | --- | --- |
 | Dashboard | `http://localhost:3001` |
 | Agent-Server UI | `http://localhost:7100` (คนละ stack, ขึ้นแยก — ดูข้อ 3) |
-| Agent-Server API (Swagger) | `http://localhost:8000/docs` |
-| Core API | `http://localhost:8081` |
-| Core API docs (Swagger) | `http://localhost:8081/docs` |
+| Agent-Server API (Swagger) | `http://localhost:8001/docs` |
+| Core API | `http://localhost:8082` |
+| Core API docs (Swagger) | `http://localhost:8082/docs` |
 | AI service | ไม่เปิด port — เรียกได้จากใน `soc-network` เท่านั้น และต้องมี `AI_SERVICE_AUTH_TOKEN` |
 
 ---
@@ -351,8 +351,8 @@ playbook ยิง `POST /v1/analyze` พร้อม header `X-API-Key` แล�
 | `SPLUNK_MCP_TOKEN` / `SPLUNK_TOKEN` | role **search-only** ไม่มี `delete_by_keyword`, `run_collect`, `run_mcollect`, `run_dump`, `run_sendalert`, `output_file`, `run_custom_command` — ดู [splunk-mcp.md](splunk-mcp.md) หัวข้อ 2 |
 | `SPLUNK_VERIFY_SSL` | ต้องเป็น `true` (lab ตั้ง false) |
 | ThreatQ account | read-only |
-| `Agent-Server` | **ไม่มี auth บน `/v1/agents/...` เลย** (ยังไม่มีระบบ API key — ดู readme ของมัน "Known limitations") ใครถึง port 8000 ได้ก็เรียก agent ได้ฟรี ต้องอยู่หลัง reverse proxy หรือ firewall เฉพาะ `soc-ai` |
-| Firewall | เปิดเฉพาะ 3001 และ 8081 ให้ IP ที่อนุญาต |
+| `Agent-Server` | **ไม่มี auth บน `/v1/agents/...` เลย** (ยังไม่มีระบบ API key — ดู readme ของมัน "Known limitations") ใครถึง port 8001 ได้ก็เรียก agent ได้ฟรี ต้องอยู่หลัง reverse proxy หรือ firewall เฉพาะ `soc-ai` |
+| Firewall | เปิดเฉพาะ 3002 และ 8082 ให้ IP ที่อนุญาต |
 | `env_file: .env` | ฉีด `.env` ทั้งไฟล์เข้าทุก container — `soc-mcp-splunk` ถือ `JWT_SECRET_KEY` อยู่ ทั้งที่แค่ query Splunk |
 
 สองข้อล่างยังไม่ได้แก้ บันทึกไว้ใน [restructure.md](restructure.md)

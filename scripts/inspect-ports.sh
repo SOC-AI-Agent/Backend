@@ -16,9 +16,9 @@
 set -eu
 
 # <default host port> <the stack's container that publishes it> <what it is>
-WANTED='8081 soc-core-api Backend API, BACKEND_HOST_PORT
-3000 soc-dashboard Frontend, FRONTEND_HOST_PORT
-8000 dall-m-server Agent-Server API, SERVER_HOST_PORT
+WANTED='8082 soc-core-api Backend API, BACKEND_HOST_PORT
+3002 soc-dashboard Frontend, FRONTEND_HOST_PORT
+8001 dall-m-server Agent-Server API, SERVER_HOST_PORT
 7100 dall-m-frontend Agent-Server admin UI
 8080 dall-m-llamacpp Agent-Server llama.cpp
 5497 dall-m-db Agent-Server Postgres'
@@ -89,14 +89,28 @@ printf '%s\n' "$WANTED" | while read -r port expect label; do
   others=$(printf '%s\n' "$all" | awk -v e="$expect" '$3 == "running" && $1 != e { printf "%s%s (%s)", s, $1, $2; s = ", " }')
   stopped=$(printf '%s\n' "$all" | awk -v e="$expect" 'NF && $3 != "running" && $1 != e { printf "%s%s (%s)", s, $1, $2; s = ", " }')
   procs=$(listening "$port" | tr '\n' ' ')
+  # The service already moved: its container runs, published on another port
+  # (its *_HOST_PORT is set). Then no other port is suggested.
+  moved=""
+  if [ "$expect" != "-" ] && [ -z "$own" ]; then
+    moved=$(awk -F'|' -v e="$expect" '$1 == e && $3 == "running" {
+        n = split($4, b, " ")
+        for (i = 1; i <= n; i++) { split(b[i], hp, "->"); printf "%s%s", s, hp[1]; s = "," }
+      }' "$tmp/containers")
+  fi
   if [ -n "$own" ]; then
     now="ok, $expect itself"
   elif [ -n "$others" ]; then
-    now="TAKEN by $others; free instead: $(next_free "$port")"
+    now="TAKEN by $others"
   elif [ -n "$procs" ]; then
-    now="TAKEN, not by a container: ${procs% }; free instead: $(next_free "$port")"
+    now="TAKEN, not by a container: ${procs% }"
   else
     now="free"
+  fi
+  if [ -n "$moved" ]; then
+    now="$now; ok, $expect runs on $moved instead"
+  elif [ "${now#TAKEN}" != "$now" ]; then
+    now="$now; free instead: $(next_free "$port")"
   fi
   # Another stopped container set on it takes it back when it starts — and
   # then it, or this service, fails to start.

@@ -64,7 +64,7 @@ services:
     env_file: ["${REPOS:-..}/AI-Service/.env"]
     # The playbook index, so a restart does not embed every page again.
     volumes: [dev-playbook-index:/data]
-    # Lets LLM_SERVER_URL=http://host.docker.internal:8000 (AI-Service/.env's
+    # Lets LLM_SERVER_URL=http://host.docker.internal:8001 (AI-Service/.env's
     # default) reach Agent-Server's published port when it runs, via its own
     # compose, on this same machine.
     extra_hosts:
@@ -76,7 +76,7 @@ services:
     container_name: soc-core-api
     command: node dist/main.js
     environment: {APP_ROLE: api}
-    ports: ["8081:8000"]
+    ports: ["8082:8000"]
     env_file: ["${REPOS:-..}/Backend/.env"]
     volumes: ["./certs:/certs:ro"]
     depends_on:
@@ -99,7 +99,7 @@ services:
   soc-frontend:
     build: ${REPOS:-..}/Frontend
     container_name: soc-frontend
-    ports: ["3001:80"]
+    ports: ["3002:80"]
     depends_on: [soc-core-api]
     networks: [soc-network]
 

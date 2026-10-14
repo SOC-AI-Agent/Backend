@@ -150,6 +150,37 @@ deploy_production:
     # picks: step 2 tells this project's containers from another stack's by it.
     - export COMPOSE_PROJECT_NAME=backend
 
+    - echo "========== 0. Host ports =========="
+    # Before anything is built or migrated: each host port this stack
+    # publishes, and which other container holds it now. `up` would say only
+    # "port is already allocated", after the build and the migration; this
+    # says what to set. BACKEND_HOST_PORT moves the API (the inspect_ports job
+    # names a free port). If it is set and the port has not moved, either this
+    # job cannot see the variable or this repo's docker-compose.yml predates it
+    # — the two are told apart below.
+    - |
+      ports=$(docker compose config --format json | sed -n 's/.*"published": *"*\([0-9][0-9]*\).*/\1/p' | sort -u)
+      echo "BACKEND_HOST_PORT in this job: ${BACKEND_HOST_PORT:-not set}"
+      echo "published by this stack: $(echo $ports)"
+      if [ -n "${BACKEND_HOST_PORT:-}" ] && ! printf '%s\n' $ports | grep -qx "$BACKEND_HOST_PORT"; then
+        echo "BACKEND_HOST_PORT is $BACKEND_HOST_PORT, but docker-compose.yml does not publish it:"
+        echo "this repo's docker-compose.yml is older than BACKEND_HOST_PORT. Copy the current one."
+        exit 1
+      fi
+      busy=""
+      for port in $ports; do
+        holder=$(docker ps --filter "publish=$port" --format '{{.Names}} ({{.Label "com.docker.compose.project"}})' \
+          | grep -v "($COMPOSE_PROJECT_NAME)\$" | tr '\n' ' ' || true)
+        if [ -n "$holder" ]; then echo "  $port: held by $holder"; busy="$busy $port"; fi
+      done
+      if [ -n "$busy" ]; then
+        echo "Set the CI variable BACKEND_HOST_PORT to a free port (inspect_ports names one)."
+        echo "Already set? Then this job cannot see it: Protected while main is not a"
+        echo "protected branch, or an environment scope other than All or production."
+        exit 1
+      fi
+      echo "  all free (or this stack's own)"
+
     - echo "========== 1. Build =========="
     # soc-network is external (see docker-compose.yml) — shared with
     # AI-service/Frontend/MCP-Server's deploys, all on this same production

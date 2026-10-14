@@ -237,13 +237,13 @@ CONFLUENCE_API_TOKEN=<API token>            # Server/DC: personal access token, 
 
 ```bash
 # 1. login เอา JWT
-JWT=$(curl -s -X POST http://localhost:8081/auth/login \
+JWT=$(curl -s -X POST http://localhost:8082/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"<รหัส admin>"}' \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
 
 # 2. ออก API key
-curl -s -X POST http://localhost:8081/admin/api-keys \
+curl -s -X POST http://localhost:8082/admin/api-keys \
   -H "Authorization: Bearer $JWT" -H 'Content-Type: application/json' \
   -d '{"name":"fortisoar-prod"}'
 ```
@@ -300,10 +300,10 @@ Agent-Server (agent platform) เป็นอีก repo ขึ้นแยก �
 ตรวจว่าตั้งครบ:
 
 ```bash
-curl -s localhost:8081/health   # ai_service: "up"
+curl -s localhost:8082/health   # ai_service: "up"
 docker exec soc-ai python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8100/health').read())"
                                 # llm_server: true
-curl -s localhost:8000/         # Agent-Server: {"status": "ok"}
+curl -s localhost:8001/         # Agent-Server: {"status": "ok"}
 docker compose exec soc-mcp-splunk python -c \
   "import urllib.request; print(urllib.request.urlopen('http://localhost:8200/health').read())"
   # splunk: true
