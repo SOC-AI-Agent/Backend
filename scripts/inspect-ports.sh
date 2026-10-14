@@ -5,7 +5,9 @@
 #
 #   sh scripts/inspect-ports.sh
 #
-# Run by the inspect_ports job in .gitlab-ci.yml, right after inspect_db_schema.
+# Run by the inspect_ports job of Backend (right after inspect_db_schema),
+# Agent-Server and AI-Service: the same file in all three repositories, since
+# it reads the whole host. Change one, copy it to the other two.
 #
 # Two sources. Docker's record of which container publishes which host port,
 # running or stopped — a stopped one takes its ports back when it starts. And
