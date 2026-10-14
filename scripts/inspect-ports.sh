@@ -11,24 +11,28 @@
 # running or stopped — a stopped one takes its ports back when it starts. And
 # the host's listening sockets, read by netstat from a throwaway container in
 # the host's network and process namespaces, which also shows what is not a
-# container at all.
+# container at all. Where another holds a port, the first port above it that
+# nothing holds is named, for the variable that moves it.
 set -eu
 
-# The stack's host ports on the production host: each default, and the
-# alternative where the FastAPI-era stack already holds the default. More for
-# one run: the CI variable CHECK_PORTS, space-separated.
-WANTED='8081 Backend API (soc-core-api)
-3000 Frontend, default
-3001 Frontend, FRONTEND_HOST_PORT
-8000 Agent-Server API, default
-8001 Agent-Server API, SERVER_HOST_PORT
-7100 Agent-Server admin UI
-8080 Agent-Server llama.cpp
-5497 Agent-Server Postgres'
-for p in ${CHECK_PORTS:-}; do
-  WANTED="$WANTED
-$p CHECK_PORTS"
-done
+# <default host port> <the stack's container that publishes it> <what it is>
+WANTED='8081 soc-core-api Backend API, BACKEND_HOST_PORT
+3000 soc-dashboard Frontend, FRONTEND_HOST_PORT
+8000 dall-m-server Agent-Server API, SERVER_HOST_PORT
+7100 dall-m-frontend Agent-Server admin UI
+8080 dall-m-llamacpp Agent-Server llama.cpp
+5497 dall-m-db Agent-Server Postgres'
+# A port chosen instead, where this job can see the variable: BACKEND_HOST_PORT
+# is this project's own; the other two only as group variables. And any in the
+# CI variable CHECK_PORTS (space-separated), for one run.
+if [ -n "${BACKEND_HOST_PORT:-}" ]; then WANTED="$WANTED
+$BACKEND_HOST_PORT soc-core-api Backend API, BACKEND_HOST_PORT"; fi
+if [ -n "${FRONTEND_HOST_PORT:-}" ]; then WANTED="$WANTED
+$FRONTEND_HOST_PORT soc-dashboard Frontend, FRONTEND_HOST_PORT"; fi
+if [ -n "${SERVER_HOST_PORT:-}" ]; then WANTED="$WANTED
+$SERVER_HOST_PORT dall-m-server Agent-Server API, SERVER_HOST_PORT"; fi
+for p in ${CHECK_PORTS:-}; do WANTED="$WANTED
+$p - CHECK_PORTS"; done
 
 # netstat from the job's own image (alpine's busybox): already on this host.
 PROBE_IMAGE="${CI_JOB_IMAGE:-docker:latest}"
@@ -52,36 +56,52 @@ if ! docker run --rm --network host --pid host --entrypoint netstat "$PROBE_IMAG
   echo "(the host's listening sockets could not be read: $(head -n 1 "$tmp/listen.err"))" > "$tmp/listen.note"
 fi
 
-section wanted false "The stack's host ports, and what holds them"
-printf '%-6s %-34s %s\n' PORT FOR NOW
-# Containers configured with this host port: running ones, or the others.
-holders() {
-  awk -F'|' -v p="$1" -v want="$2" '($3 == "running") == (want == "running") {
+# Containers configured with host port $1: "name project status" per line.
+on_port() {
+  awk -F'|' -v p="$1" '{
       n = split($4, b, " ")
       for (i = 1; i <= n; i++) {
         split(b[i], hp, "->")
-        if (hp[1] == p) { printf "%s%s (%s)", sep, $1, ($2 == "" ? "no compose project" : $2); sep = ", "; break }
+        if (hp[1] == p) { print $1, ($2 == "" ? "-" : $2), $3; break }
       }
     }' "$tmp/containers"
 }
+# What listens on host port $1: "PID/program" per line.
+listening() {
+  awk -v p="$1" '$1 ~ /^tcp/ && $6 == "LISTEN" { n = split($4, a, ":"); if (a[n] == p) print $7 }' "$tmp/listen" | sort -u
+}
+# The first port above $1 that no container is set on and nothing listens on.
+next_free() {
+  p=$(( $1 + 1 ))
+  while [ "$p" -le $(( $1 + 100 )) ]; do
+    if [ -z "$(on_port "$p")$(listening "$p")" ]; then echo "$p"; return; fi
+    p=$(( p + 1 ))
+  done
+  echo "none within 100"
+}
 
-printf '%s\n' "$WANTED" | while read -r port label; do
+section wanted false "The stack's host ports, and what holds them"
+printf '%-6s %-38s %s\n' PORT FOR NOW
+printf '%s\n' "$WANTED" | while read -r port expect label; do
   [ -n "$port" ] || continue
-  running=$(holders "$port" running)
-  stopped=$(holders "$port" stopped)
-  procs=$(awk -v p="$port" '$1 ~ /^tcp/ && $6 == "LISTEN" { n = split($4, a, ":"); if (a[n] == p) print $7 }' "$tmp/listen" \
-    | sort -u | tr '\n' ' ')
-  if [ -n "$running" ]; then
-    now="TAKEN by $running"
+  all=$(on_port "$port")
+  own=$(printf '%s\n' "$all" | awk -v e="$expect" '$1 == e && $3 == "running"')
+  others=$(printf '%s\n' "$all" | awk -v e="$expect" '$3 == "running" && $1 != e { printf "%s%s (%s)", s, $1, $2; s = ", " }')
+  stopped=$(printf '%s\n' "$all" | awk -v e="$expect" 'NF && $3 != "running" && $1 != e { printf "%s%s (%s)", s, $1, $2; s = ", " }')
+  procs=$(listening "$port" | tr '\n' ' ')
+  if [ -n "$own" ]; then
+    now="ok, $expect itself"
+  elif [ -n "$others" ]; then
+    now="TAKEN by $others; free instead: $(next_free "$port")"
   elif [ -n "$procs" ]; then
-    now="TAKEN, not by a container: ${procs% }"
+    now="TAKEN, not by a container: ${procs% }; free instead: $(next_free "$port")"
   else
     now="free"
   fi
-  # A stopped container takes its ports back when it starts — after a deploy
-  # bound this one, it would be the one that fails.
+  # Another stopped container set on it takes it back when it starts — and
+  # then it, or this service, fails to start.
   if [ -n "$stopped" ]; then now="$now; also set on stopped $stopped"; fi
-  printf '%-6s %-34s %s\n' "$port" "$label" "$now"
+  printf '%-6s %-38s %s\n' "$port" "$label" "$now"
 done
 end_section wanted
 
