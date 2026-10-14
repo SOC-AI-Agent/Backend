@@ -28,9 +28,33 @@ services:
     restart: unless-stopped
     networks: [soc-network]
 
+  # deploy_production's database until production's is wired in (the CI
+  # variable PROD_POSTGRES_PASSWORD unset). A name of its own, so it can never
+  # answer for the soc-db the FastAPI-era stack runs on the production host.
+  # Started only with --profile test-db.
+  soc-test-db:
+    profiles: [test-db]
+    image: postgres:16-alpine
+    container_name: soc-test-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-socai}
+      POSTGRES_USER: ${POSTGRES_USER:-socai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-socai_secret}
+    volumes: [test-postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-socai}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks: [soc-network]
+
   soc-redis:
     image: redis:7-alpine
-    container_name: soc-redis
+    # Not soc-redis: the FastAPI-era stack on the production host already has a
+    # container by that name, and container names are host-wide. This one still
+    # answers to soc-redis, its service name, on soc-network.
+    container_name: soc-core-redis
     command: redis-server --appendonly yes
     volumes: [redis-data:/data]
     healthcheck:
@@ -83,6 +107,7 @@ services:
 
 volumes:
   postgres-data:
+  test-postgres-data:
   redis-data:
 
 networks:

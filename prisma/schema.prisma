@@ -2,6 +2,10 @@
 // so an existing socai database keeps working without a data migration.
 // Enum type names (jobstatus/eventtype/actortype) and labels follow SQLAlchemy's
 // defaults: the PG enum stores the *member name*, e.g. "PENDING", not "pending".
+// Index names (ix_*) and foreign keys (no ON UPDATE action) are SQLAlchemy's
+// too, written out here so a migration never renames or rebuilds them.
+// prisma/migrations/0_init is that database as it was; later migrations only
+// add to it.
 
 generator client {
   provider = "prisma-client-js"
@@ -23,7 +27,6 @@ enum JobStatus {
 
 /**
  * The Splunk lookup is a second stage, and it has its own life.
- *
  * Deliberately not folded into JobStatus: a job is COMPLETED once the
  * suggestion is ready, which is what the analyst waits for and what
  * processing_time_ms measures. Whether anyone went on to spend ten minutes of
@@ -80,7 +83,7 @@ model Role {
 
 model User {
   id             String   @id @default(uuid()) @db.Uuid
-  username       String   @unique @db.VarChar(100)
+  username       String   @unique(map: "ix_users_username") @db.VarChar(100)
   email          String   @unique @db.VarChar(255)
   hashedPassword String   @map("hashed_password")
   isActive       Boolean  @default(true) @map("is_active")
@@ -88,11 +91,10 @@ model User {
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  role    Role     @relation(fields: [roleId], references: [id])
+  role    Role     @relation(fields: [roleId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   apiKeys ApiKey[]
   jobs    AiJob[]
 
-  @@index([username])
   @@map("users")
 }
 
@@ -107,27 +109,31 @@ model ApiKey {
   lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz(6)
   createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  owner User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  owner User    @relation(fields: [ownerId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   jobs  AiJob[]
 
-  @@index([keyPrefix])
+  @@index([keyPrefix], map: "ix_api_keys_key_prefix")
   @@map("api_keys")
 }
 
 model AiJob {
-  jobId            String    @id @default(uuid()) @map("job_id") @db.Uuid
-  alertId          String    @map("alert_id") @db.VarChar(100)
-  alertName        String    @map("alert_name") @db.VarChar(255)
-  rawLog           String    @map("raw_log")
-  renderedPrompt   String?   @map("rendered_prompt")
-  apiKeyId         String?   @map("api_key_id") @db.Uuid
-  status           JobStatus @default(PENDING)
-  aiResponse       String?   @map("ai_response")
+  jobId          String    @id @default(uuid()) @map("job_id") @db.Uuid
+  alertId        String    @map("alert_id") @db.VarChar(100)
+  alertName      String    @map("alert_name") @db.VarChar(255)
+  rawLog         String    @map("raw_log")
+  // The instruction a playbook used to send with the alert. The FastAPI backend
+  // required it; this one no longer accepts one (see AnalyzeDto), so new jobs
+  // leave it empty. Kept, not dropped, because older jobs' rows hold it.
+  prompt         String?
+  renderedPrompt String?   @map("rendered_prompt")
+  apiKeyId       String?   @map("api_key_id") @db.Uuid
+  status         JobStatus @default(PENDING)
+  aiResponse     String?   @map("ai_response")
   // What was established before the model ran — indicators extracted from the
   // alert and what threat intelligence said about them. Kept apart from
   // aiResponse because it is checkable: the model's prose can be wrong about
   // it, and then the two disagree visibly.
-  evidence         Json?     @map("evidence")
+  evidence       Json?     @map("evidence")
 
   // ── the Splunk stage ──────────────────────────────────────────────────
   // What the first model said it needs, in its own words. Written by stage 1
@@ -142,24 +148,24 @@ model AiJob {
   lookupCompletedAt  DateTime?    @map("lookup_completed_at")
   // The agent run on the LLM server. Its trace holds what the analysing
   // agent asked the query agent for, and what came back.
-  agentRunId       String?   @map("agent_run_id")
-  errorMessage     String?   @map("error_message")
-  modelUsed        String?   @map("model_used") @db.VarChar(100)
-  processingTimeMs Int?      @map("processing_time_ms")
-  tokensPrompt     Int?      @map("tokens_prompt")
-  tokensEval       Int?      @map("tokens_eval")
-  ownerId          String?   @map("owner_id") @db.Uuid
-  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  completedAt      DateTime? @map("completed_at") @db.Timestamptz(6)
+  agentRunId         String?      @map("agent_run_id")
+  errorMessage       String?      @map("error_message")
+  modelUsed          String?      @map("model_used") @db.VarChar(100)
+  processingTimeMs   Int?         @map("processing_time_ms")
+  tokensPrompt       Int?         @map("tokens_prompt")
+  tokensEval         Int?         @map("tokens_eval")
+  ownerId            String?      @map("owner_id") @db.Uuid
+  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  completedAt        DateTime?    @map("completed_at") @db.Timestamptz(6)
 
-  apiKey    ApiKey?    @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
-  owner     User?      @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  apiKey    ApiKey?    @relation(fields: [apiKeyId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  owner     User?      @relation(fields: [ownerId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   auditLogs AuditLog[]
 
-  @@index([alertId])
-  @@index([status])
-  @@index([ownerId])
-  @@index([createdAt])
+  @@index([alertId], map: "ix_ai_jobs_alert_id")
+  @@index([status], map: "ix_ai_jobs_status")
+  @@index([ownerId], map: "ix_ai_jobs_owner_id")
+  @@index([createdAt], map: "ix_ai_jobs_created_at")
   @@map("ai_jobs")
 }
 
@@ -181,10 +187,10 @@ model AuditLog {
   extraData          Json?     @map("extra_data")
   timestamp          DateTime  @default(now()) @db.Timestamptz(6)
 
-  job AiJob? @relation(fields: [jobId], references: [jobId], onDelete: SetNull)
+  job AiJob? @relation(fields: [jobId], references: [jobId], onDelete: SetNull, onUpdate: NoAction)
 
-  @@index([eventType])
-  @@index([jobId])
-  @@index([timestamp])
+  @@index([eventType], map: "ix_audit_logs_event_type")
+  @@index([jobId], map: "ix_audit_logs_job_id")
+  @@index([timestamp], map: "ix_audit_logs_timestamp")
   @@map("audit_logs")
 }

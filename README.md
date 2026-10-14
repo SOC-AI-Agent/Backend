@@ -112,25 +112,47 @@ variant in `DATABASE_URL` is for the Python service only.
 
 ```bash
 docker compose up -d --build soc-core-api soc-core-worker
-docker compose exec soc-core-api npx prisma db push   # create/sync schema
-docker compose exec soc-core-api npm run seed          # roles only
+docker compose exec soc-core-api sh scripts/migrate.sh   # create/upgrade schema
+docker compose exec soc-core-api npm run seed            # roles only
 docker compose logs -f soc-core-worker
 ```
 
-`prisma db push` is for a fresh local database only. The production schema must
-be inventoried before enabling automated Prisma migrations — this repository's
-schema is not proof of what production currently contains. Start with a
-read-only dump and compare it with `prisma/schema.prisma`:
+## Schema changes
 
-```bash
-pg_dump --schema-only --no-owner --no-privileges "$CORE_DATABASE_URL" \
-  > production-schema.sql
-```
+The schema changes only through `prisma/migrations/`, the same way on a laptop
+and in production: `scripts/migrate.sh` applies what a database has not had yet,
+then fails unless the database matches `prisma/schema.prisma`.
 
-Do not run `prisma migrate resolve`, `prisma migrate deploy`, or `prisma db push`
-against production until the existing tables, enums, indexes, constraints, and
-the password hash column have been reviewed. Then create a baseline from the
-actual production schema and test it against a database clone.
+- `0_init` is the production database as the FastAPI backend left it, read by
+  the `inspect_db_schema` job. A database with those tables and no migration
+  history (production, the first time) is marked as having had it, with nothing
+  run, and then gets the migrations after it.
+- `20261014120000_nest_backend` only adds: the lookup columns, `lookupstatus`,
+  `AUTH_KEY_FAILED`, and `prompt` made optional. Nothing is dropped.
+
+To change the schema, edit `schema.prisma`, run
+`npx prisma migrate dev --name <what-changed>` against a local database, read the
+SQL it wrote, and commit it. deploy_production applies it before the new API
+starts. Never `prisma db push`: on a database with data in it, it drops whatever
+the schema no longer mentions.
+
+A local database made with `db push` before there were migrations already has
+every column. Mark both as applied (`npx prisma migrate resolve --applied 0_init`,
+then the same for `20261014120000_nest_backend`) and run `scripts/migrate.sh`
+to confirm it matches.
+
+On the production host, the CI variable `PROD_POSTGRES_PASSWORD` decides which
+database deploy_production uses:
+
+- **unset**: a test database of the backend's own, `soc-test-db`, created
+  empty with `POSTGRES_*`. Production's `soc-db` is not touched.
+- **set**: production's database, the `soc-db` container the FastAPI-era stack
+  already runs, with its data, as `PROD_POSTGRES_USER` on `PROD_POSTGRES_DB`
+  (both default to `socai`). It is attached to soc-network, dumped to the
+  volume `backend_db-backups`, then migrated.
+
+`CORE_DATABASE_URL` is built from those variables at deploy time. Redis is the
+backend's own in both cases (`soc-core-redis`).
 
 For a temporary VPN-only schema inspection, set `DB_SCHEMA_DEBUG=true` and call
 `GET /internal/db/schema` with an admin JWT. It returns public table/column

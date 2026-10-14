@@ -104,11 +104,20 @@ SQL
 end_section migrations
 
 # What `prisma migrate` would have to change to make this database match the
-# schema.prisma deployed in soc-core-api. Empty means they already match.
+# schema.prisma deployed in soc-core-api. Empty means they already match. Only
+# when the deployed backend uses this database: before production's is wired
+# in, it runs on a test database, and a diff of that would be shown here under
+# this database's name. Only the host is read out of the URL — after its last
+# @, so no part of a password can reach the log.
 section drift false "Drift: SQL from this database to the deployed prisma/schema.prisma"
 if [ "$(docker inspect -f '{{.State.Running}}' "$API_CONTAINER" 2>/dev/null)" = true ]; then
-  docker exec -e PRISMA_HIDE_UPDATE_MESSAGE=1 "$API_CONTAINER" sh -c \
-    'npx prisma migrate diff --from-url "$CORE_DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --script'
+  docker exec -e PRISMA_HIDE_UPDATE_MESSAGE=1 -e CHECKPOINT_DISABLE=1 -e DB_HOST="$DB_CONTAINER" "$API_CONTAINER" sh -c '
+    host=${CORE_DATABASE_URL##*@}; host=${host%%[:/?]*}
+    if [ "$host" = "$DB_HOST" ]; then
+      npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --script
+    else
+      echo "(skipped: the deployed backend uses the database at $host, not $DB_HOST)"
+    fi'
 else
   echo "(skipped: $API_CONTAINER is not running, so there is no deployed schema to compare with)"
 fi

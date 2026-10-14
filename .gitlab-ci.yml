@@ -17,6 +17,8 @@
 # (SPLUNK_MCP_URL, SPLUNK_MCP_TOKEN) directly — MCP-Server is development-only
 # and not deployed, so MCP_AUTH_TOKEN is not needed here. SPLUNK_URL and
 # SPLUNK_TOKEN are read only by the manual export_catalog job.
+# PROD_POSTGRES_PASSWORD decides which database deploy_production uses: set,
+# production's; unset, a test database of this project's own (its step 2).
 
 stages:
   - build
@@ -144,8 +146,11 @@ deploy_production:
     - if: '$CI_COMMIT_BRANCH == "main"'
   script:
     - *write_env
+    # Fixed rather than taken from the checkout directory, whose name GitLab
+    # picks: step 2 tells this project's containers from another stack's by it.
+    - export COMPOSE_PROJECT_NAME=backend
 
-    - echo "========== 1. Build and start =========="
+    - echo "========== 1. Build =========="
     # soc-network is external (see docker-compose.yml) — shared with
     # AI-service/Frontend/MCP-Server's deploys, all on this same production
     # runner/host. Whichever of the four deploys first, creates it; idempotent
@@ -153,37 +158,130 @@ deploy_production:
     - docker network create soc-network 2>/dev/null || true
     - *proxy
     - docker compose build $PROXY_ARGS
-    - docker compose up -d --wait
 
-    - echo "========== 2. Database schema =========="
-    # `migrate deploy` applies committed migrations and refuses to invent any.
-    # There is no prisma/migrations/ in this repo yet — until there is, this
-    # step does nothing and the schema is whatever the last `db push` left.
+    - echo "========== 2. Database and Redis =========="
+    # Which database, chosen by the CI variable PROD_POSTGRES_PASSWORD:
+    #
+    #   unset  test: soc-test-db, this project's own (volume
+    #          backend_test-postgres-data), created empty with POSTGRES_USER /
+    #          POSTGRES_PASSWORD / POSTGRES_DB on the first deploy and kept
+    #          after. Production's soc-db is not touched at all: not attached,
+    #          not backed up, not migrated.
+    #   set    production: the soc-db the FastAPI-era stack already runs on this
+    #          host (compose project soc-ai-ops, volume soc-ai-ops_postgres-data),
+    #          with the data in it, as PROD_POSTGRES_USER on PROD_POSTGRES_DB
+    #          (both default to socai) — the names the monorepo's pipeline
+    #          used. Used as it is: started if stopped and attached to
+    #          soc-network; nothing here recreates or removes it. soc-test-db is
+    #          stopped, its rows left where they are; nothing moves across.
+    #
+    # Going to production is setting PROD_POSTGRES_PASSWORD and deploying
+    # again; deleting it goes back to the test database.
+    #
+    # CORE_DATABASE_URL is written into .env here, from those variables — a
+    # CORE_DATABASE_URL CI variable is not used — with the password
+    # percent-encoded byte by byte so any character survives the URL. Never
+    # printed.
+    #
+    # Redis is this project's own in both: soc-core-redis (see
+    # docker-compose.yml), named outright in REDIS_URL, because the old stack's
+    # soc-redis is left alone and may answer to the name soc-redis too.
+    - |
+      pct() { printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n' | sed 's/../%&/g'; }
+      dotenv() { sed -n "s/^$1=//p" .env | head -n 1; }
+      if [ -n "${PROD_POSTGRES_PASSWORD:-}" ]; then
+        db=production
+        if ! docker container inspect soc-db >/dev/null 2>&1; then
+          echo "PROD_POSTGRES_PASSWORD is set, but this host has no soc-db container."
+          echo "Delete the variable to deploy against the test database instead."
+          exit 1
+        fi
+        project=$(docker container inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' soc-db)
+        echo "database: production — soc-db (compose project: ${project:-none})"
+        if [ "$(docker container inspect -f '{{.State.Running}}' soc-db)" != true ]; then
+          echo "  stopped — starting it"
+          docker start soc-db >/dev/null
+        fi
+        if [ -z "$(docker container inspect -f '{{if index .NetworkSettings.Networks "soc-network"}}yes{{end}}' soc-db)" ]; then
+          echo "  attaching it to soc-network"
+          docker network connect soc-network soc-db
+        fi
+        # By its own healthcheck if it has one. Not a gate: whether the
+        # password gets in is what step 3 finds out, with a clearer error.
+        for i in $(seq 1 30); do
+          state=$(docker container inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' soc-db)
+          case "$state" in healthy|running) break ;; esac
+          sleep 2
+        done
+        echo "  $state"
+        docker compose --profile test-db stop soc-test-db
+        url="postgresql://${PROD_POSTGRES_USER:-socai}:$(pct "$PROD_POSTGRES_PASSWORD")@soc-db:5432/${PROD_POSTGRES_DB:-socai}"
+      else
+        db=test
+        # The volume keeps the password it is created with, so a real one,
+        # not .env.example's.
+        : "${POSTGRES_PASSWORD:?set the CI variable POSTGRES_PASSWORD — the test database is created with it}"
+        echo "database: test — soc-test-db (PROD_POSTGRES_PASSWORD is not set)"
+        docker compose --profile test-db up -d --wait soc-test-db
+        user=$(dotenv POSTGRES_USER); name=$(dotenv POSTGRES_DB)
+        url="postgresql://${user:-socai}:$(pct "$(dotenv POSTGRES_PASSWORD)")@soc-test-db:5432/${name:-socai}"
+      fi
+      docker compose up -d --wait soc-redis
+      { grep -v -E '^(CORE_DATABASE_URL|REDIS_URL|REDIS_HOST)=' .env
+        printf 'CORE_DATABASE_URL=%s\n' "$url"
+        printf 'REDIS_URL=redis://soc-core-redis:6379/0\nREDIS_HOST=soc-core-redis\n'
+      } > .env.new
+      mv .env.new .env
+
+    - echo "========== 3. Backup, schema and roles =========="
+    # Production only: a dump before anything below touches its database, on
+    # every deploy. The first one alters a database that has never been
+    # migrated, and nobody can reach this host to take one by hand. Kept in the
+    # volume backend_db-backups, newest 10 — never an artifact, it is
+    # production data. Restore the newest the same way:
+    #   docker run --rm --network soc-network -v backend_db-backups:/backup \
+    #     --env-file .env postgres:16-alpine sh -c 'pg_restore --clean \
+    #     --if-exists -d "${CORE_DATABASE_URL%%\?*}" "$(ls -1t /backup/*.dump | head -1)"'
+    #
+    # Written as .part and renamed only once pg_dump succeeds: a failed one
+    # (wrong password) leaves an empty file, and empty files counted among the
+    # newest 10 would push the real ones out.
+    - |
+      if [ "$db" = production ]; then
+        docker run --rm --network soc-network -v backend_db-backups:/backup --env-file .env \
+          postgres:16-alpine sh -c '
+            set -e
+            rm -f /backup/*.part
+            f=/backup/$(date -u +%Y%m%dT%H%M%SZ).dump
+            if ! pg_dump -Fc -f "$f.part" "${CORE_DATABASE_URL%%\?*}"; then rm -f "$f.part"; exit 1; fi
+            mv "$f.part" "$f"
+            ls -1t /backup/*.dump | tail -n +11 | xargs -r rm -f
+            echo "backup: $f ($(du -h "$f" | cut -f1))"'
+      else
+        echo "backup: skipped — test database"
+      fi
+    # Before the API and the worker start, so neither runs against a schema it
+    # does not expect. scripts/migrate.sh applies prisma/migrations, baselines
+    # the FastAPI-era database the first time (tables, no migration history),
+    # and stops the deploy if the database then differs from schema.prisma. In
+    # one-off containers of the image just built; --no-deps because step 2 has
+    # settled where the database and Redis are, and depends_on names this
+    # project's own.
     #
     # `db push` is deliberately NOT run here. It makes the database match the
     # schema file, and on production that includes dropping a column the schema
     # no longer mentions — without asking, and with the data in it.
-    - |
-      if [ -d prisma/migrations ]; then
-        docker compose exec -T soc-core-api npx prisma migrate deploy
-      else
-        echo "no prisma/migrations/ — skipping."
-        echo "Generate one before the next schema change:"
-        echo "  npx prisma migrate dev --name <what-changed>"
-        echo "and commit it. Without migrations there is no reviewed, repeatable"
-        echo "path from the current production schema to the next one."
-      fi
-
-    - echo "========== 3. Seed =========="
+    - docker compose run --rm --no-deps -T soc-core-api sh scripts/migrate.sh
     # Roles only. Production users are provisioned separately; no credential
     # is created from the environment.
-    - docker compose exec -T soc-core-api node dist/seed.js
+    - docker compose run --rm --no-deps -T soc-core-api node dist/seed.js
 
-    - echo "========== 4. Restart the worker =========="
-    # The worker holds its config at boot. It is restarted after the schema
-    # and seed so it does not spend the first minutes of a deploy running
-    # against the old one.
-    - docker compose restart soc-core-worker
+    - echo "========== 4. Start =========="
+    - |
+      if ! docker compose up -d --wait --no-deps soc-core-api soc-core-worker; then
+        docker compose logs --tail 50 soc-core-api soc-core-worker
+        exit 1
+      fi
 
     - echo "========== 5. Health =========="
     # A deploy that finishes is not a deploy that works. Checked here so the
@@ -201,15 +299,15 @@ deploy_production:
 
 # Prints the production database's tables, columns, enums, constraints,
 # indexes, Prisma migration history, and its drift from the deployed
-# prisma/schema.prisma — the inventory the README asks for before any
-# migration is baselined — and the containers, volumes and networks beside it.
+# prisma/schema.prisma — the inventory prisma/migrations/0_init was written
+# from — and the containers, volumes and networks beside it.
 # Read-only (see scripts/inspect-db-schema.sh); structure only, no rows and no
 # credentials reach the log.
 #
 # On main it runs by itself, in its own stage before deploy_production and
 # export_catalog, so the database is shown as it was before this deploy — and
 # is shown even when the deploy then fails. The drift section compares against
-# the backend deployed last time, if one is running. allow_failure: a host with
+# the backend deployed last time, if one is running on this database. allow_failure: a host with
 # no database yet fails the inspection, and that must not stop the deploy that
 # creates it. On other protected branches it stays a button (▶).
 inspect_db_schema:

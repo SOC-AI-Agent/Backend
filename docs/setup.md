@@ -86,16 +86,24 @@ python script/add_admin_user.py --username admin --email admin@example.com --pas
 
 ---
 
-## 4. สร้างตารางและ seed (local เท่านั้น)
+## 4. สร้างตารางและ seed
 
 ```bash
-docker compose exec soc-core-api npx prisma db push
-docker compose exec soc-core-api npm run seed          # roles only
+docker compose exec soc-core-api sh scripts/migrate.sh   # สร้าง/อัปเดต schema ตาม prisma/migrations
+docker compose exec soc-core-api npm run seed            # roles only
 ```
 
-`prisma db push` ใช้สำหรับ local database ที่สร้างใหม่เท่านั้น ห้ามใช้กับ
-production database ที่มีข้อมูลอยู่แล้ว สำหรับ production ให้ตรวจ schema จริง
-และวางแผน migration แยกก่อน (ดู [README](../README.md#commands))
+`scripts/migrate.sh` เป็นตัวเดียวกับที่ deploy_production ใช้ ไม่ใช้ `prisma db push`
+แล้ว เพราะ push ลบ column ที่ schema ไม่มีโดยไม่ถาม DB local ที่เคยสร้างด้วย
+`db push` ไว้ก่อนมี column ครบแล้ว ให้ mark ว่า apply แล้วก่อน:
+
+```bash
+docker compose exec soc-core-api npx prisma migrate resolve --applied 0_init
+docker compose exec soc-core-api npx prisma migrate resolve --applied 20261014120000_nest_backend
+docker compose exec soc-core-api sh scripts/migrate.sh   # ตรวจว่าตรงกับ schema
+```
+
+ดู [README](../README.md#schema-changes)
 
 `seed` สร้างแค่ roles ไม่สร้าง user จาก env อีกแล้ว admin คนแรกสร้างเอง
 (รหัสไม่ผ่าน argv และไม่ลง `.env`):

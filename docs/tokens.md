@@ -83,6 +83,11 @@ openssl rand -hex 16
 > docker compose exec soc-db psql -U socai -d socai \
 >   -c "ALTER USER socai WITH PASSWORD '<ค่าใหม่>';"
 > ```
+>
+> **บนเครื่อง production** deploy เลือก DB จาก CI variable `PROD_POSTGRES_PASSWORD`:
+> ไม่มี = test DB ของ Backend เอง (`soc-test-db`) สร้างด้วย `POSTGRES_PASSWORD`
+> มี = `soc-db` เดิมของ stack FastAPI ใช้รหัสนั้น (`PROD_POSTGRES_USER`/`PROD_POSTGRES_DB`
+> default `socai`) ทั้งสองแบบ deploy ประกอบ `CORE_DATABASE_URL` ให้เอง
 
 ### `DEFAULT_ADMIN_PASSWORD`
 
@@ -283,7 +288,7 @@ echo "AI_SERVICE_AUTH_TOKEN=$(openssl rand -hex 32)"   # ค่าเดีย�
 
 ```bash
 docker compose -f deploy/dev.yml --project-directory . up -d --build
-docker compose exec soc-core-api npx prisma db push
+docker compose exec soc-core-api sh scripts/migrate.sh
 docker compose exec soc-core-api npm run seed          # roles only
 ```
 
