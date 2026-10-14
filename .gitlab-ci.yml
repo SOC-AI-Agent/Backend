@@ -64,18 +64,16 @@ build_image:
   stage: build
   image: docker:latest
   tags:
-    - test
-  # A shared runner has no Docker daemon of its own, so one is started
-  # alongside. The deploy job does the opposite — it wants the daemon of the
-  # host it is deploying to — which is why this is set per job rather than
-  # once at the top.
-  services:
-    - docker:dind
+    - llm
+  # Builds on the runner host's own Docker daemon, through the socket the llm
+  # runner mounts — no docker:dind. One fixed tag, overwritten each run: the
+  # host is the production machine, and an image per commit would pile up on
+  # its disk.
   variables:
-    DOCKER_HOST: tcp://docker:2375
+    DOCKER_HOST: unix:///var/run/docker.sock
     DOCKER_TLS_CERTDIR: ""
   script:
-    - docker build -t "soc-core:${CI_COMMIT_SHORT_SHA}" -t soc-core:latest .
+    - docker build -t soc-core:ci .
   rules:
     - if: '$CI_COMMIT_BRANCH'
 
@@ -83,7 +81,7 @@ code_test:
   stage: test
   image: node:20
   tags:
-    - test
+    - llm
   script:
     - npm ci
     - npx prisma generate
@@ -102,8 +100,10 @@ deploy_production:
   # container and take it away again.
   tags:
     # `llm` is the production runner: the one installed on the machine that
-    # hosts the stack, so the runner IS the deployment target. Build and test
-    # jobs run on `test`; the same runner carries both tags today.
+    # hosts the stack, so the runner IS the deployment target. Every job in
+    # this file runs on it — a docker executor with the host's
+    # /var/run/docker.sock mounted. The `test` runner is a shell executor with
+    # no docker, so nothing here uses it.
     - llm
   variables:
     # The socket of the machine this runner is on: the deployment target.
