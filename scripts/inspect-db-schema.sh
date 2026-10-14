@@ -18,12 +18,33 @@ API_CONTAINER="${API_CONTAINER:-soc-core-api}"
 # variable or password is involved.
 psql_ro() {
   docker exec -i "$DB_CONTAINER" sh -c \
-    'PGOPTIONS="-c default_transaction_read_only=on" psql -X -q -v ON_ERROR_STOP=1 -P pager=off -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+    'PGOPTIONS="-c default_transaction_read_only=on" psql -X -q -v ON_ERROR_STOP=1 -P pager=off -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-${POSTGRES_USER:-postgres}}"'
 }
 
 # GitLab collapsible log sections; plain headings anywhere else.
 section() { printf '\n\033[0Ksection_start:%s:%s[collapsed=%s]\r\033[0K== %s ==\n' "$(date +%s)" "$1" "$2" "$3"; }
 end_section() { printf '\033[0Ksection_end:%s:%s\r\033[0K\n' "$(date +%s)" "$1"; }
+
+# Where the database lives on this host, and what else runs beside it — to plan
+# how the backend connects to it. Names, images, networks, mounts and compose
+# labels only: from the database container's environment, just its user and
+# database name, never a password or any other variable.
+section containers false "Containers, volumes and the database container"
+docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Label "com.docker.compose.project"}}\t{{.Networks}}'
+echo
+docker volume ls --format 'table {{.Name}}\t{{.Label "com.docker.compose.project"}}'
+echo
+docker inspect "$DB_CONTAINER" --format '
+container  {{.Name}}
+image      {{.Config.Image}}
+status     {{.State.Status}} (started {{.State.StartedAt}})
+project    {{index .Config.Labels "com.docker.compose.project"}} / service {{index .Config.Labels "com.docker.compose.service"}}
+compose    {{index .Config.Labels "com.docker.compose.project.config_files"}}
+networks   {{range $name, $n := .NetworkSettings.Networks}}{{$name}} {{end}}
+mounts     {{range .Mounts}}{{.Type}}:{{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}} -> {{.Destination}}  {{end}}
+ports      {{range $p, $b := .NetworkSettings.Ports}}{{$p}}{{if $b}}->{{(index $b 0).HostPort}}{{end}} {{end}}'
+docker exec "$DB_CONTAINER" sh -c 'echo "POSTGRES_USER  ${POSTGRES_USER:-(unset: postgres)}"; echo "POSTGRES_DB    ${POSTGRES_DB:-(unset)}"'
+end_section containers
 
 section server false "Server"
 psql_ro <<'SQL'
@@ -85,11 +106,15 @@ end_section migrations
 # What `prisma migrate` would have to change to make this database match the
 # schema.prisma deployed in soc-core-api. Empty means they already match.
 section drift false "Drift: SQL from this database to the deployed prisma/schema.prisma"
-docker exec -e PRISMA_HIDE_UPDATE_MESSAGE=1 "$API_CONTAINER" sh -c \
-  'npx prisma migrate diff --from-url "$CORE_DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --script'
+if [ "$(docker inspect -f '{{.State.Running}}' "$API_CONTAINER" 2>/dev/null)" = true ]; then
+  docker exec -e PRISMA_HIDE_UPDATE_MESSAGE=1 "$API_CONTAINER" sh -c \
+    'npx prisma migrate diff --from-url "$CORE_DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --script'
+else
+  echo "(skipped: $API_CONTAINER is not running, so there is no deployed schema to compare with)"
+fi
 end_section drift
 
 section ddl true "Full schema DDL (pg_dump --schema-only)"
 docker exec "$DB_CONTAINER" sh -c \
-  'pg_dump --schema-only --no-owner --no-privileges -U "$POSTGRES_USER" "$POSTGRES_DB"'
+  'pg_dump --schema-only --no-owner --no-privileges -U "${POSTGRES_USER:-postgres}" "${POSTGRES_DB:-${POSTGRES_USER:-postgres}}"'
 end_section ddl

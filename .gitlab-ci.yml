@@ -21,6 +21,7 @@
 stages:
   - build
   - test
+  - inspect
   - deploy
 
 # The office proxy, the runner host's only way to the internet. A CI/CD
@@ -201,14 +202,18 @@ deploy_production:
 # Prints the production database's tables, columns, enums, constraints,
 # indexes, Prisma migration history, and its drift from the deployed
 # prisma/schema.prisma — the inventory the README asks for before any
-# migration is baselined. Read-only (see scripts/inspect-db-schema.sh);
-# structure only, no rows and no credentials reach the log.
+# migration is baselined — and the containers, volumes and networks beside it.
+# Read-only (see scripts/inspect-db-schema.sh); structure only, no rows and no
+# credentials reach the log.
 #
-# Never runs on its own: press ▶ on it in a pipeline for main. It needs
-# nothing else in the pipeline, so it can run before, after or without a
-# deploy.
+# On main it runs by itself, in its own stage before deploy_production and
+# export_catalog, so the database is shown as it was before this deploy — and
+# is shown even when the deploy then fails. The drift section compares against
+# the backend deployed last time, if one is running. allow_failure: a host with
+# no database yet fails the inspection, and that must not stop the deploy that
+# creates it. On other protected branches it stays a button (▶).
 inspect_db_schema:
-  stage: deploy
+  stage: inspect
   image: docker:latest
   # Same runner as deploy_production: the machine whose soc-db this reads.
   tags:
@@ -223,6 +228,8 @@ inspect_db_schema:
     action: access
   needs: []
   rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      allow_failure: true
     - if: '$CI_COMMIT_REF_PROTECTED == "true"'
       when: manual
       allow_failure: true
@@ -261,7 +268,8 @@ export_catalog:
   environment:
     name: production
     action: access
-  needs: []
+  # After the inspection, like deploy_production.
+  needs: [inspect_db_schema]
   rules:
     - if: '$CI_COMMIT_REF_PROTECTED == "true"'
       when: manual
