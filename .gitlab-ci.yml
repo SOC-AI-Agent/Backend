@@ -334,6 +334,36 @@ inspect_db_schema:
   script:
     - sh scripts/inspect-db-schema.sh
 
+# Which host ports the stack publishes on this machine, and what holds each one:
+# a running container, a stopped one that takes the port back when it starts,
+# or something that is not a container. Read-only (scripts/inspect-ports.sh),
+# for choosing SERVER_HOST_PORT (Agent-Server) and FRONTEND_HOST_PORT
+# (Frontend) before a deploy finds one taken. Add ports for one run with the
+# CI variable CHECK_PORTS="9000 9001".
+#
+# Right after inspect_db_schema, with the same rules. needs still lets this run
+# when that one fails (allow_failure), and it never stops a pipeline either.
+inspect_ports:
+  stage: inspect
+  image: docker:latest
+  tags:
+    - llm
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    DOCKER_TLS_CERTDIR: ""
+  environment:
+    name: production
+    action: access
+  needs: [inspect_db_schema]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      allow_failure: true
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+      allow_failure: true
+  script:
+    - sh scripts/inspect-ports.sh
+
 # ── Splunk data catalogue ────────────────────────────────────────────────────
 #
 # Reads Splunk and writes down what stage 1 needs to aim a requirement: which

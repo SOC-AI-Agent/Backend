@@ -30,6 +30,20 @@ set -eu
 # No update check: the production containers have no route to the internet.
 export PRISMA_HIDE_UPDATE_MESSAGE=1 CHECKPOINT_DISABLE=1
 
+# What this image carries, before Prisma is asked anything. Without
+# prisma/migrations, `migrate deploy` says "No migration found" and succeeds,
+# and the drift check below then prints the whole schema as SQL — when the
+# fault is a repository missing files. Every database needs 0_init, so its
+# absence stops here, with what is there instead.
+echo "migrate: migrations in this image: $(ls prisma/migrations 2>/dev/null | tr '\n' ' ')"
+if [ ! -s prisma/migrations/0_init/migration.sql ]; then
+  echo "migrate: prisma/migrations/0_init/migration.sql is missing or empty. Every"
+  echo "         migration must be at prisma/migrations/<name>/migration.sql,"
+  echo "         next to prisma/migrations/migration_lock.toml. Found:"
+  find prisma -type f | sort | sed 's/^/           /'
+  exit 1
+fi
+
 if out=$(npx prisma migrate deploy 2>&1); then
   echo "$out"
 else
