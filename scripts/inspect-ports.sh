@@ -154,7 +154,7 @@ end_section addresses
 section firewall true "This host's packet filter"
 docker run --rm --network host --pid host --cap-add NET_ADMIN --cap-add NET_RAW --entrypoint sh "$PROBE_IMAGE" -c '
   if pgrep -x firewalld >/dev/null 2>&1; then
-    echo "firewalld is running: its own nftables rules are not listed here"
+    echo "firewalld is running: its own rules are in the next section"
   fi
   for ipt in iptables-nft iptables-legacy; do
     rules=$($ipt -S 2>/dev/null) || continue
@@ -165,3 +165,24 @@ docker run --rm --network host --pid host --cap-add NET_ADMIN --cap-add NET_RAW 
     $ipt -t nat -S DOCKER 2>/dev/null | grep DNAT | sed "s/^/    /"
   done' || echo "(could not be read)"
 end_section firewall
+
+# firewalld's own rules, as it reports them at runtime: the default zone, the
+# zone each interface is in, each active zone's open ports and services, and
+# its policies (firewalld 0.9+). Only firewall-cmd --get-* and --list-*:
+# nothing is changed. They are the host's own firewall-cmd, run in the host's
+# namespaces through nsenter — which takes a privileged container; this job
+# already holds the Docker socket, which is the same power.
+section firewalld true "firewalld (listed only)"
+docker run --rm --privileged --pid host --entrypoint nsenter "$PROBE_IMAGE" -t 1 -m -u -n -i sh -c '
+  command -v firewall-cmd >/dev/null 2>&1 || { echo "(no firewall-cmd on this host)"; exit 0; }
+  [ "$(firewall-cmd --state 2>/dev/null)" = running ] || { echo "(firewalld is not running)"; exit 0; }
+  echo "default zone: $(firewall-cmd --get-default-zone)"
+  for zone in $(firewall-cmd --get-active-zones | grep -v "^[[:space:]]" | awk "{print \$1}"); do
+    echo "--- zone $zone"
+    firewall-cmd --zone="$zone" --list-all
+  done
+  if policies=$(firewall-cmd --list-all-policies 2>/dev/null) && [ -n "$policies" ]; then
+    echo "--- policies"
+    printf "%s\n" "$policies"
+  fi' || echo "(could not be read)"
+end_section firewalld
