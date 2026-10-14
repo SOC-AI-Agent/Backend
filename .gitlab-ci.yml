@@ -23,6 +23,11 @@ stages:
   - test
   - deploy
 
+# The office proxy, the runner host's only way to the internet. A CI/CD
+# variable of the same name overrides this; an empty one turns the proxy off.
+variables:
+  BUILD_PROXY: "http://192.168.137.120:8080"
+
 
 # ── Reusable: write .env from CI variables ──────────────────────────────────
 #
@@ -60,6 +65,23 @@ stages:
     if eval "[ \"\${${key}+set}\" = set ]"; then echo "  $key"; fi
   done < .env.example
 
+# ── Reusable: the office proxy ──────────────────────────────────────────────
+#
+# Without it apt, npm, pip and prisma time out on the runner host ("Unable to
+# locate package"). Exported for the npm/pip a job runs itself, and handed to
+# `docker build` / `docker compose build` as PROXY_ARGS: a build does not
+# inherit the job's environment. These are Docker's predefined proxy build
+# args — no ARG line needed in any Dockerfile, and they stay out of the image's
+# history. Both spellings, because apt reads only the lowercase ones. Set inside
+# the script, after the checkout, so `git clone` never goes through the proxy.
+.proxy: &proxy |
+  p="${BUILD_PROXY:-}"
+  np="localhost,127.0.0.1"
+  export http_proxy="$p" https_proxy="$p" HTTP_PROXY="$p" HTTPS_PROXY="$p" \
+         no_proxy="$np" NO_PROXY="$np"
+  PROXY_ARGS="--build-arg http_proxy=$p --build-arg https_proxy=$p --build-arg HTTP_PROXY=$p --build-arg HTTPS_PROXY=$p --build-arg no_proxy=$np --build-arg NO_PROXY=$np"
+  if [ -n "$p" ]; then echo "proxy: on"; else echo "proxy: off (BUILD_PROXY is empty)"; fi
+
 build_image:
   stage: build
   image: docker:latest
@@ -73,7 +95,8 @@ build_image:
     DOCKER_HOST: unix:///var/run/docker.sock
     DOCKER_TLS_CERTDIR: ""
   script:
-    - docker build -t soc-core:ci .
+    - *proxy
+    - docker build $PROXY_ARGS -t soc-core:ci .
   rules:
     - if: '$CI_COMMIT_BRANCH'
 
@@ -83,6 +106,7 @@ code_test:
   tags:
     - llm
   script:
+    - *proxy
     - npm ci
     - npx prisma generate
     # Type errors have reached main from this repo before. tsc is not a test
@@ -126,7 +150,9 @@ deploy_production:
     # runner/host. Whichever of the four deploys first, creates it; idempotent
     # so the other three deploying in any order or any number of times is fine.
     - docker network create soc-network 2>/dev/null || true
-    - docker compose up -d --build --wait
+    - *proxy
+    - docker compose build $PROXY_ARGS
+    - docker compose up -d --wait
 
     - echo "========== 2. Database schema =========="
     # `migrate deploy` applies committed migrations and refuses to invent any.
