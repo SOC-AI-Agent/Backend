@@ -30,7 +30,7 @@ end_section() { printf '\033[0Ksection_end:%s:%s\r\033[0K\n' "$(date +%s)" "$1";
 # labels only: from the database container's environment, just its user and
 # database name, never a password or any other variable.
 section containers false "Containers, volumes and the database container"
-docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Label "com.docker.compose.project"}}\t{{.Networks}}'
+docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Label "com.docker.compose.project"}}\t{{.Networks}}\t{{.Ports}}'
 echo
 docker volume ls --format 'table {{.Name}}\t{{.Label "com.docker.compose.project"}}'
 echo
