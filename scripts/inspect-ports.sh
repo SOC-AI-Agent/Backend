@@ -132,3 +132,34 @@ else
   awk '$1 ~ /^tcp/ && $6 == "LISTEN" { n = split($4, a, ":"); printf "%-7s %-26s %s\n", a[n], $4, $7 }' "$tmp/listen" | sort -n -u
 fi
 end_section listening
+
+# When a port answers here but a browser elsewhere times out, something drops
+# the packets on the way: this host's own filter, or the network between. The
+# two sections below tell those apart from this side. Every address the host
+# has (a browser that cannot reach one may reach another — DEPLOY_HOST in the
+# deploy jobs), and its packet filter as iptables lists it: INPUT and FORWARD
+# policies, INPUT and DOCKER-USER rules, and the DNAT rules Docker made for
+# published ports. Listed only (-S), from a throwaway container with NET_ADMIN
+# in the host's network namespace; both iptables backends, since the host
+# uses one and the other lists nothing. firewalld keeps its own nftables
+# tables, which iptables does not show — whether it runs is reported.
+section addresses true "This host's addresses"
+docker run --rm --network host --entrypoint sh "$PROBE_IMAGE" -c \
+  'ip -4 -o addr show scope global | grep -v -E " (docker0|br-|veth)" | sed -n "s/^[0-9]*: *\([^ ]*\) *inet \([0-9.\/]*\).*/\2  \1/p"' \
+  || echo "(could not be read)"
+end_section addresses
+
+section firewall true "This host's packet filter"
+docker run --rm --network host --pid host --cap-add NET_ADMIN --cap-add NET_RAW --entrypoint sh "$PROBE_IMAGE" -c '
+  if pgrep -x firewalld >/dev/null 2>&1; then
+    echo "firewalld is running: its own nftables rules are not listed here"
+  fi
+  for ipt in iptables-nft iptables-legacy; do
+    rules=$($ipt -S 2>/dev/null) || continue
+    [ -n "$(printf "%s\n" "$rules" | grep -v "^-P ")" ] || continue
+    echo "--- $ipt"
+    printf "%s\n" "$rules" | grep -E "^-P (INPUT|FORWARD) |^-A (INPUT|DOCKER-USER) "
+    echo "  DNAT for published ports:"
+    $ipt -t nat -S DOCKER 2>/dev/null | grep DNAT | sed "s/^/    /"
+  done' || echo "(could not be read)"
+end_section firewall
