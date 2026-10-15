@@ -16,7 +16,6 @@ playbook ยังค้น index ที่มีอยู่จริงไห�
 | --- | --- |
 | [`catalog/splunk-catalog.json`](../catalog/splunk-catalog.json) | **คนเขียน** — index → sourcetype → `purpose`, `roles` (ความหมาย → ชื่อ field ใน sourcetype นั้น), `notes` |
 | [`catalog/lookup-plans.json`](../catalog/lookup-plans.json) | ถามอะไรเมื่อ alert มี indicator แต่ละชนิด |
-| [`catalog/catalog-export.example.json`](../catalog/catalog-export.example.json) | ตัวอย่าง input ไว้ลอง `make_catalog_template.py` โดยไม่ต้องมี Splunk |
 
 **ถูก build เข้า image** ที่ `/catalog` ([Dockerfile](../Dockerfile)) — ไม่ได้ mount จาก repo อื่นแล้ว
 แก้ catalogue = commit แล้ว deploy ตามปกติ ตำแหน่งที่ service อ่านคือ `SPLUNK_CATALOG_FILE`
@@ -53,10 +52,12 @@ GitLab → CI/CD → Pipelines → pipeline ของ branch ที่ protected
 
 - ไม่รันเองอัตโนมัติ: ยิง search หนึ่งครั้งต่อ sourcetype บน search head production
   และ catalogue เปลี่ยนเมื่อ estate เปลี่ยน ไม่ใช่ทุก commit
-- ไม่ขวาง pipeline (`allow_failure: true`) และไม่ต้องรอ job อื่น (`needs: []`)
+- ไม่ขวาง pipeline (`allow_failure: true`) รอแค่ `inspect_db_schema`
 - ใช้ environment `production` (`action: access`) คนที่ deploy production ได้เท่านั้นที่กดได้
 - export ลง staging ก่อน ตรวจด้วย `verify_catalog_export.py` แล้วค่อยย้ายเข้าที่ —
   export ที่ตายกลางทาง (เช่นได้ 3 จาก 200 sourcetype) จะ fail ไม่ใช่ได้ catalogue ครึ่งใบ
+- หน้า **Run job** (หลังกด ▶) ใส่ variable ปรับการดึงได้: `WINDOW` (ช่วงเวลา default `-30d`) และ
+  `SAMPLE` (จำนวน event ต่อ sourcetype default `200`)
 
 ### 3. ตรวจ artifact
 
@@ -89,26 +90,6 @@ build เข้า image เอง
 
 ---
 
-## รันเองจากเครื่อง (ไม่ผ่าน CI)
-
-ต้องใช้ Python 3.12 (macOS มี 3.9 เป็น `python3` — script จะบอกเอง) ไม่ต้องติดตั้ง package
-
-```bash
-export SPLUNK_URL='https://splunk.example.com:8089'
-export SPLUNK_AUTH='Bearer <token>'
-export SPLUNK_INSECURE=0                      # 1 = ข้ามการตรวจ cert (lab เท่านั้น — default ของ script คือ 1)
-OUT=catalog/table python3.12 scripts/export_splunk_catalog.py
-python3.12 scripts/verify_catalog_export.py catalog/table
-cp catalog/splunk-catalog.json catalog/table/splunk-catalog.json
-python3.12 scripts/make_catalog_template.py catalog/table -o catalog/table/splunk-catalog.json
-```
-
-ปรับได้ด้วย env: `WINDOW` (default `-30d`), `SAMPLE` (event ต่อ sourcetype, default `200`)
-ลอง template โดยไม่มี Splunk:
-`python3.12 scripts/make_catalog_template.py catalog/catalog-export.example.json -o /tmp/try.json`
-
----
-
 ## 4 ขั้นที่ `export_splunk_catalog.py` ทำ
 
 1. **estate เป็น CIM หรือยัง** — `| rest /services/data/models | table title`
@@ -137,9 +118,7 @@ python3.12 scripts/make_catalog_template.py catalog/table -o catalog/table/splun
 ## ตรวจว่าใช้ได้จริง
 
 หลัง deploy ถาม Splunk ผ่านทางเดียวกับ stage 2 แล้วดูว่า SPL ที่ได้ใช้ index และ field ที่ถูก:
-
-```bash
-docker exec soc-core-worker node dist/scripts/splunk-mcp-check.js "Which destinations did 10.1.100.11 talk to"
-```
+กด ▶ ที่ job **`check_splunk_requirement`** แล้วใส่ `SPLUNK_CHECK_REQUIREMENT` เช่น
+`Which destinations did 10.1.100.11 talk to` ([splunk-mcp.md ข้อ 5](splunk-mcp.md#5-ตรวจว่าใช้ได้-job-check_splunk))
 
 ได้แถวกลับมา = ถูก ได้ 0 แถวทั้งที่รู้ว่ามีข้อมูล = field หรือ index ยังผิด — ดู [testing.md](testing.md)

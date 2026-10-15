@@ -31,11 +31,11 @@ src/
 prisma/schema.prisma       maps onto the existing SQLAlchemy tables
 ```
 
-## Relationship to ../ai-service
+## Relationship to AI-Service and Agent-Server
 
-This backend is the only writer of the database. The Python AI service is
-stateless on purpose — restart it, scale it, or swap the model behind it
-without touching job state.
+This backend is the only writer of the database. AI-Service (`soc-ai`) is
+stateless on purpose, and the agents themselves live in Agent-Server — restart
+either, or swap the model behind them, without touching job state.
 
 ```
 SOAR --POST /v1/analyze (X-API-Key)--> soc-core-api
@@ -46,10 +46,11 @@ SOAR --POST /v1/analyze (X-API-Key)--> soc-core-api
                                           |
                                           v
                                    soc-core-worker
-                                          |  POST /analyze
+                                          |  indicators, ThreatQ, playbook match
+                                          |  POST /analyze (Bearer AI_SERVICE_AUTH_TOKEN)
                                           v
-                                       soc-ai  --> Ollama
-                                          |
+                                       soc-ai  --> Agent-Server: the named agent
+                                          |        (soc-suggest, soc-requirements, soc-conclude)
                                   ai_response back
                                           |
                         worker writes COMPLETED/FAILED + audit
@@ -58,15 +59,13 @@ SOAR --POST /v1/analyze (X-API-Key)--> soc-core-api
 Contract, implemented client-side in `src/modules/ai/ai.service.ts`:
 
 ```
-POST {AI_SERVICE_URL}/analyze
-  request   { "rendered_prompt": "<prompt + raw log>", "model": "qwen2.5:7b" }
-  response  { "response": "...", "model": "qwen2.5:7b",
-              "total_duration_ms": 12345, "tokens_prompt": 900, "tokens_eval": 210 }
+POST {AI_SERVICE_URL}/analyze          Authorization: Bearer AI_SERVICE_AUTH_TOKEN
+  request   { "rendered_prompt": "...", "agent": "soc-suggest", "model": "..." }
+  response  { "response": "...", "model": "...", "total_duration_ms": 12345,
+              "tokens_prompt": 900, "tokens_eval": 210, "run_id": "..." }
 
-GET {AI_SERVICE_URL}/health  ->  { "status": "ok" }
+GET {AI_SERVICE_URL}/health  (no token)
 ```
-
-The AI service does not implement this yet — see `../ai-service/README.md`.
 
 ## Splunk over MCP
 
@@ -75,17 +74,17 @@ goes as text to `saia_generate_spl` (Splunk AI Assistant's Text-to-SPL), the SPL
 that comes back is checked by `spl-guard`, and `splunk_run_query` runs it
 (`src/modules/enrichment/splunk-mcp.service.ts`).
 
-| | Development | A real Splunk (lab or production) |
-| --- | --- | --- |
-| MCP server | the mock, `MCP-Server/Splunk` | Splunk's own MCP Server app |
-| `SPLUNK_MCP_URL` | `http://soc-mcp-splunk:8200/services/mcp` | `https://<splunk>:8089/services/mcp` |
-| `SPLUNK_MCP_TOKEN` | blank — `MCP_AUTH_TOKEN` is sent | the encrypted token from the MCP Server app |
-| `NODE_EXTRA_CA_CERTS` | — | the CA that signed the certificate on 8089 |
+| | |
+| --- | --- |
+| MCP server | Splunk's own MCP Server app on the search head |
+| `SPLUNK_MCP_URL` | `https://<search-head>:8089/services/mcp` |
+| `SPLUNK_MCP_TOKEN` | the encrypted token from the MCP Server app (CI variable) |
+| `NODE_EXTRA_CA_CERTS` | `/app/certs/<ca>.pem`, the CA that signed the certificate on 8089, committed to `certs/` |
 
-A real Splunk needs two apps (MCP Server, AI Assistant with Agent Mode on), a
-search-only role and token, a network path, and a certificate for the name in the
-URL first. How, and how to check it:
-[docs/splunk-mcp.md](docs/splunk-mcp.md).
+It needs two apps (MCP Server, AI Assistant with Agent Mode on), a search-only
+role and token, a network path, and a certificate for the name in the URL
+first. How: [docs/splunk-mcp.md](docs/splunk-mcp.md). The `check_splunk` job
+checks it after every deploy; it may fail (⚠) without failing the pipeline.
 
 ## Auth
 
@@ -108,20 +107,33 @@ snake_case fields and lowercase job statuses.
 `CORE_DATABASE_URL` uses the plain `postgresql://` scheme — the `+asyncpg`
 variant in `DATABASE_URL` is for the Python service only.
 
-## Commands
+## Deploying
 
-```bash
-docker compose up -d --build soc-core-api soc-core-worker
-docker compose exec soc-core-api sh scripts/migrate.sh   # create/upgrade schema
-docker compose exec soc-core-api npm run seed            # roles only
-docker compose logs -f soc-core-worker
-```
+Production is one host, `10.40.35.18`, and nobody has a shell on it. Every push
+to `main` runs `deploy_production` on the `llm` runner installed there, which
+drives that host's Docker directly; settings are CI/CD variables, written into
+`.env` by the job and never printed or kept as an artifact. Anything to be
+seen on the host is a pipeline job:
+
+| Job | When | What |
+| --- | --- | --- |
+| `inspect_db_schema` | on `main`, before the deploy | the database's structure, migrations and drift |
+| `inspect_ports` | on `main`, before the deploy | host ports, who holds each, the firewall |
+| `deploy_production` | on `main` | ports, build, database, backup, migrate, seed roles, start, health, address |
+| `check_splunk` | on `main`, after the deploy | can stage 2 reach Splunk |
+| `check_splunk_requirement` | ▶ | one requirement end to end against Splunk |
+| `export_catalog` | ▶ | the Splunk data catalogue, as an artifact |
+
+The inspection and check jobs are allowed to fail: a ⚠, never a failed
+pipeline. Step by step, with the variables each repo needs:
+[docs/setup.md](docs/setup.md).
 
 ## Schema changes
 
-The schema changes only through `prisma/migrations/`, the same way on a laptop
-and in production: `scripts/migrate.sh` applies what a database has not had yet,
-then fails unless the database matches `prisma/schema.prisma`.
+The schema changes only through `prisma/migrations/`: `scripts/migrate.sh`, run
+by deploy_production before the new API starts, applies what the database has
+not had yet, then fails the deploy unless the database matches
+`prisma/schema.prisma`.
 
 - `0_init` is the production database as the FastAPI backend left it, read by
   the `inspect_db_schema` job. A database with those tables and no migration
@@ -130,19 +142,13 @@ then fails unless the database matches `prisma/schema.prisma`.
 - `20261014120000_nest_backend` only adds: the lookup columns, `lookupstatus`,
   `AUTH_KEY_FAILED`, and `prompt` made optional. Nothing is dropped.
 
-To change the schema, edit `schema.prisma`, run
-`npx prisma migrate dev --name <what-changed>` against a local database, read the
-SQL it wrote, and commit it. deploy_production applies it before the new API
-starts. Never `prisma db push`: on a database with data in it, it drops whatever
-the schema no longer mentions.
+To change the schema, edit `schema.prisma`, generate the migration with
+`npx prisma migrate dev --name <what-changed>` (it needs a scratch database),
+read the SQL it wrote, and commit it. Never `prisma db push`: on a database
+with data in it, it drops whatever the schema no longer mentions.
 
-A local database made with `db push` before there were migrations already has
-every column. Mark both as applied (`npx prisma migrate resolve --applied 0_init`,
-then the same for `20261014120000_nest_backend`) and run `scripts/migrate.sh`
-to confirm it matches.
-
-On the production host, the CI variable `PROD_POSTGRES_PASSWORD` decides which
-database deploy_production uses:
+The CI variable `PROD_POSTGRES_PASSWORD` decides which database
+deploy_production uses:
 
 - **unset**: a test database of the backend's own, `soc-test-db`, created
   empty with `POSTGRES_*`. Production's `soc-db` is not touched.
@@ -154,19 +160,12 @@ database deploy_production uses:
 `CORE_DATABASE_URL` is built from those variables at deploy time. Redis is the
 backend's own in both cases (`soc-core-redis`).
 
-For a temporary VPN-only schema inspection, set `DB_SCHEMA_DEBUG=true` and call
-`GET /internal/db/schema` with an admin JWT. It returns public table/column
+For a temporary VPN-only schema inspection, set the CI variable
+`DB_SCHEMA_DEBUG=true`, deploy, and call `GET /internal/db/schema` with an admin
+JWT. It returns public table/column
 metadata only and redacts password, secret, token, hash, and API-key columns.
 With the flag off the route answers 404. Set it back to `false` and redeploy
 after the inspection.
-
-Local, outside Docker:
-
-```bash
-npm install
-npx prisma generate
-npm run start:dev
-```
 
 ## Dependency security
 
@@ -241,7 +240,7 @@ under five alerts are printed as candidates but not emitted as rules unless
 
 ## API docs (Swagger)
 
-`http://localhost:8082/docs` (also through the dashboard's nginx at `:3002/docs`); the OpenAPI document
+`http://10.40.35.18:8082/docs` (also through the dashboard's nginx at `http://10.40.35.18:3002/docs`); the OpenAPI document
 itself is `/docs-json`. **Authorize** takes either credential — an API key for `X-API-Key`, or the
 `access_token` from `POST /auth/login` for Bearer — and every operation shows which one it needs, so
 Try it out sends it. The token survives a page reload.
@@ -269,107 +268,42 @@ the same alerts and assertions.
 
 ```bash
 pip install -r tests/requirements.txt
+export SOC_BASE_URL=http://10.40.35.18:8082
 SOC_API_KEY=<key> pytest                 # everything; submits real jobs
 SOC_API_KEY=<key> pytest -m "not e2e"    # request/auth/validation only, no waiting on the model
 pytest                                   # no key: only the 401 checks run, the rest skip
 ```
 
-`SOC_BASE_URL` (default `http://localhost:8082`) points it elsewhere;
+Run it from a machine that reaches the API. `SOC_BASE_URL` is where it points;
 `SOC_JOB_TIMEOUT` (default 300 s per job) is how long an `e2e` test waits for
 the model. Jobs it creates are named `PYTEST-…` and age out with the rest.
 
-`docs/` covers the whole stack: `setup.md` to bring it up, `tokens.md` for
-which credential each service needs, `splunk-mcp.md` to connect stage 2 to a real
-Splunk, `testing.md` for what to check when an answer looks wrong, and
-`restructure.md` for why the architecture is shaped the way it is.
+`docs/` covers the production stack: `setup.md` to bring it up, `tokens.md`
+for which credential each service needs, `splunk-mcp.md` to connect stage 2 to
+Splunk, `splunk-catalog.md` for the data catalogue, `testing.md` for what to
+check when an answer looks wrong, and `restructure.md` for why the architecture
+is shaped the way it is.
 
-## Running all four repos together
+## The other repos
 
-`deploy/stack.yml` brings up the whole SOC, expecting AI-Service and Frontend
-checked out beside this one. Each repo also runs alone with its own compose file.
-[Agent-Server](../Agent-Server/readme.md), the agent platform, is not part of
-this: it is a separate system on its own network, brought up with its own
-compose (see "What is not running, and why" below).
+Split out of the SOC-AI monorepo. Production runs four repos on the one host,
+each deployed by its own pipeline:
 
-```bash
-docker compose -f deploy/stack.yml --project-directory . up -d --build
-```
+| Repo | What it is | On the host |
+| --- | --- | --- |
+| `Backend` | API, queue worker, Postgres, Redis. The only writer to the database. | `soc-core-api` :8082, `soc-core-worker` |
+| `AI-Service` | The backend's stateless door to the agent platform, and the playbook index. | `soc-ai`, not published |
+| `Frontend` | The analyst dashboard; proxies the API under the same origin. | `soc-dashboard` :3002 |
+| `Agent-Server` | DALL-M: agents as data (model, prompt) and the loop that runs them, on llama.cpp. | admin UI :7100, API :8001 |
 
-The Splunk mock is off unless asked for with `--profile mock-splunk`, and only
-then needs the MCP-Server repo beside this one. It takes `MCP_AUTH_TOKEN` from
-`Backend/.env`, so it needs no `.env` of its own.
-
-## Running the whole thing locally
-
-Check AI-Service and Frontend out beside this repo, plus
-[Agent-Server](../Agent-Server/readme.md) — and MCP-Server only if you want the
-Splunk mock — then:
-
-```bash
-cd Backend
-./deploy/dev-setup.sh                            # writes .env in Backend, AI-Service (and MCP-Server if present)
-docker compose -f deploy/dev.yml --project-directory . up -d --build   # http://localhost:3001
-
-cd ../Agent-Server
-cp .env.example .env && docker compose up -d --build   # http://localhost:7100
-```
-
-`dev-setup.sh` generates the secrets and writes them into every repo that needs
-them. Two of those — `AI_SERVICE_AUTH_TOKEN` and the mock's `MCP_AUTH_TOKEN` —
-have to be identical in more than one file, and they are the ones that break
-quietly: a mismatch is a 401 with nothing saying why. Generating them once and
-writing them everywhere is the point of the script.
-
-It refuses to overwrite an existing `.env`. Pass `--force` when you mean to.
-Run again, it writes only the `.env` files that are missing, with the tokens
-`Backend/.env` already holds — so cloning MCP-Server later and re-running it is
-enough.
-
-### What is not running, and why
-
-ThreatQ and Confluence are not services here: the backend calls them directly,
-with the credentials in `Backend/.env` (`THREATQ_*`, `CONFLUENCE_*`). Left blank,
-the summary says ThreatQ was NOT CHECKED and every playbook match says nothing
-is indexed.
-
-`deploy/dev.yml` has no Splunk. What works without it is most of the path: an
-alert arrives, its indicators are extracted, the agent writes a suggestion, and
-the searches it asks for sit on the job waiting for a button that has nothing
-to call yet. To give the button something to call, run the mock from the
-MCP-Server repo (made-up events, `dev-setup.sh` prints the commands):
-
-```bash
-cd ../MCP-Server && docker compose up -d --build soc-mcp-splunk
-```
-
-— or point `SPLUNK_MCP_URL` at a real Splunk: [docs/splunk-mcp.md](docs/splunk-mcp.md).
-Neither compose file brings up Agent-Server — see the previous section.
-
----
-
-## Where this came from
-
-Split out of the SOC-AI monorepo. The other pieces:
-
-| Repo | What it is |
-| --- | --- |
-| `Backend` | API, queue worker, Postgres, Redis. The only writer to the database. |
-| `AI-Service` | The backend's stateless door to the agent platform. |
-| `MCP-Server` | Connectors for Splunk, ThreatQ and Confluence. |
-| `Frontend` | The analyst dashboard. |
-
-Plus [`Agent-Server`](../Agent-Server/readme.md) (internal name DALL-M):
-agents as data — model, prompt, tools — and the loop that runs them. It
-replaced an earlier in-house LLM server; it is its own system with its own
-Postgres and its own network, not one of the four above, and `AI-Service` is
-the only thing that calls it (see `AI-Service/README.md`, "Agent-Server").
-
-They meet on one Docker network called `soc-network`, created by whichever
-stack comes up first, and address each other by container name. Bring up
-`MCP-Server` first: it is the one the rest call. Agent-Server is not on
-`soc-network` and brings itself up on its own.
+Backend, AI-Service and Frontend meet on one Docker network called
+`soc-network`, created by whichever deploys first, and address each other by
+container name. Agent-Server is its own system with its own Postgres and its
+own network; `soc-ai` is the only thing that calls it, through the host
+(`host.docker.internal:8001`). ThreatQ, Confluence and Splunk are outside the
+host and the backend calls them directly.
 
 Each repo carries only the settings its own services read. In the monorepo one
-`.env` was shared by every container, which meant the Splunk connector's
-environment also held the database password and the ThreatQ credentials — a
-compromise of any one service read the secrets of all of them.
+`.env` was shared by every container, which meant every service's environment
+held the database password and the ThreatQ credentials — a compromise of any
+one service read the secrets of all of them.

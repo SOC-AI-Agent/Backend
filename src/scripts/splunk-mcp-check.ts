@@ -1,6 +1,8 @@
 /**
  * Is the Splunk MCP endpoint usable by stage 2? Run inside soc-core-worker, which
- * has the same .env, network and CA as the lookups:
+ * has the same .env, network and CA as the lookups, by two jobs in .gitlab-ci.yml:
+ * check_splunk after every deploy with no argument, and check_splunk_requirement
+ * (manual) with SPLUNK_CHECK_REQUIREMENT as the argument:
  *
  *   docker exec soc-core-worker node dist/scripts/splunk-mcp-check.js
  *   docker exec soc-core-worker node dist/scripts/splunk-mcp-check.js "Failed logins in the last hour"
@@ -10,6 +12,8 @@
  * through the same path a lookup does — generate, check, run — and prints the SPL
  * and the rows. Read-only either way. The token is never printed.
  */
+import { existsSync } from 'fs';
+
 import { ConfigService } from '@nestjs/config';
 
 import configuration from '../config/configuration';
@@ -23,7 +27,10 @@ async function main(): Promise<void> {
   console.log(`endpoint       ${splunk.mcpUrl}`);
   console.log(`token          ${splunk.token ? `set (${splunk.token.length} chars)` : 'NOT SET'}`);
   console.log(`tools          ${splunk.generateTool}, ${splunk.queryTool}`);
-  console.log(`extra CA       ${process.env.NODE_EXTRA_CA_CERTS || 'none'}`);
+  // Node only warns at start-up when this file is missing, then carries on without it — and
+  // every TLS error after that looks like a bad certificate rather than a missing file.
+  const ca = process.env.NODE_EXTRA_CA_CERTS;
+  console.log(`extra CA       ${ca ? `${ca} (${existsSync(ca) ? 'found' : 'MISSING — not used; in production the file is under /app/certs'})` : 'none'}`);
 
   const service = new SplunkMcpService(config);
   const session = await service.connect();

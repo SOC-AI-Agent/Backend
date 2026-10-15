@@ -25,6 +25,7 @@ stages:
   - test
   - inspect
   - deploy
+  - verify
 
 # The office proxy, the runner host's only way to the internet. A CI/CD
 # variable of the same name overrides this; an empty one turns the proxy off.
@@ -435,6 +436,94 @@ inspect_ports:
       allow_failure: true
   script:
     - sh scripts/inspect-ports.sh
+
+# Can stage 2 reach Splunk? Two jobs, one script, both in the deployed
+# soc-core-worker — the container that does the lookups, with its .env,
+# network and CA:
+#   1. network and certificate: curl to SPLUNK_MCP_URL with the same CA, no
+#      token — "HTTP 401" is the answer wanted; anything else names what is
+#      wrong (DNS, a firewall timing out, the certificate) more plainly than
+#      Node's "fetch failed"
+#   2. scripts/splunk-mcp-check: the token, whether the CA file is really
+#      there, and whether Splunk's MCP server offers saia_generate_spl and
+#      splunk_run_query
+#   3. check_splunk_requirement only: the requirement in
+#      SPLUNK_CHECK_REQUIREMENT, end to end — Text-to-SPL, the guard, the
+#      search — printing the prompt, the SPL that ran and the rows
+#
+# check_splunk runs by itself on main right after deploy_production (a button
+# on other protected branches). check_splunk_requirement is always a button:
+# a search against production Splunk on demand, not on every deploy. It is a
+# job of its own because GitLab offers the "Run job" form, where the
+# requirement is typed in, only for a manual job.
+#
+# Read-only; the token is never printed. See docs/splunk-mcp.md, section 5.
+#
+# A Splunk that does not answer must not take the rest down with it: both are
+# allowed to fail. A failure shows as ⚠ with the reason in the log, while the
+# pipeline, and the deploy before it, stay passed — Splunk is only stage 2, and
+# the rest of the system works without it.
+.splunk_check:
+  stage: verify
+  image: docker:latest
+  tags:
+    - llm
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    DOCKER_TLS_CERTDIR: ""
+  environment:
+    name: production
+    action: access
+  # After the deploy on main, so it checks what was just deployed. Elsewhere
+  # there is no deploy in the pipeline; it checks the one already running.
+  needs:
+    - job: deploy_production
+      optional: true
+  script:
+    - |
+      echo "== 1. Network and certificate (no token sent: HTTP 401 means both are fine) =="
+      docker exec soc-core-worker sh -c '
+        [ -n "${SPLUNK_MCP_URL:-}" ] || { echo "SPLUNK_MCP_URL is not set"; exit 0; }
+        ca=/etc/ssl/certs/ca-certificates.crt
+        if [ -n "${NODE_EXTRA_CA_CERTS:-}" ]; then
+          if [ -r "$NODE_EXTRA_CA_CERTS" ]; then
+            cat "$ca" "$NODE_EXTRA_CA_CERTS" > /tmp/ca-check.pem && ca=/tmp/ca-check.pem
+          else
+            echo "NODE_EXTRA_CA_CERTS=$NODE_EXTRA_CA_CERTS is not in the container (production: /app/certs/...)"
+          fi
+        fi
+        curl -sS -o /dev/null -w "HTTP %{http_code}\n" --max-time 20 --cacert "$ca" "$SPLUNK_MCP_URL" || true'
+      echo "== 2. MCP: token, CA and tools${SPLUNK_CHECK_REQUIREMENT:+ — 3. one requirement end to end} =="
+      docker exec soc-core-worker node dist/scripts/splunk-mcp-check.js "${SPLUNK_CHECK_REQUIREMENT:-}"
+
+check_splunk:
+  extends: .splunk_check
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      allow_failure: true
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+      allow_failure: true
+  # A project-level SPLUNK_CHECK_REQUIREMENT would make every deploy search
+  # production Splunk; that is check_splunk_requirement's job.
+  before_script:
+    - unset SPLUNK_CHECK_REQUIREMENT
+
+# Press ▶ and, in the "Run job" form, set SPLUNK_CHECK_REQUIREMENT, e.g.
+# "Which destinations did 10.1.100.11 talk to".
+check_splunk_requirement:
+  extends: .splunk_check
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+      allow_failure: true
+  before_script:
+    - |
+      if [ -z "${SPLUNK_CHECK_REQUIREMENT:-}" ]; then
+        echo "Set SPLUNK_CHECK_REQUIREMENT in this job's Run job form (the ▶ button), e.g."
+        echo "  Which destinations did 10.1.100.11 talk to"
+        exit 1
+      fi
 
 # ── Splunk data catalogue ────────────────────────────────────────────────────
 #

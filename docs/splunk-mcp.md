@@ -4,20 +4,15 @@ Stage 2 ถาม Splunk ผ่าน MCP โดยมี Backend (`soc-core-wor
 ขั้นตอนคือส่งแต่ละ requirement เป็น**ข้อความ**ให้ Text-to-SPL ของ Splunk เขียน SPL, ตรวจ SPL ที่ได้,
 แล้วสั่งให้ Splunk รัน ฝั่งเราไม่มี model ตัวไหนเขียน SPL
 
-เอกสารนี้คือขั้นตอนต่อ Backend เข้ากับ **Splunk MCP Server app** ของจริง ใช้ได้ทั้งกับ Splunk ใน lab
-(container `splunk` ของ Offensive-Detection-Lab) และ production ส่วน mock สำหรับพัฒนา
-(`soc-mcp-splunk`) อยู่ที่ [MCP-Server/Splunk/README.md](../../MCP-Server/Splunk/README.md)
+เอกสารนี้คือขั้นตอนต่อ Backend บน production เข้ากับ **Splunk MCP Server app** บน search head ของบริษัท
 
 | ขั้น | ทำที่ | |
 | --- | --- | --- |
 | 1. ติดตั้ง Splunk MCP Server กับ Splunk AI Assistant และเปิด Agent Mode | Splunk | **activation code ใช้เวลาได้ถึง 3 วันทำการ ควรเริ่มก่อนขั้นอื่น** |
 | 2. service account, role และ token | Splunk | |
-| 3. network และ certificate | Docker, Splunk | |
-| 4. ค่าใน `Backend/.env` | Backend | |
-| 5. ตรวจว่าใช้ได้ | Backend | |
-
-> Git Bash บน Windows จะแปลง path ที่ขึ้นต้นด้วย `/opt/...` เป็น path ของ Windows ทำให้
-> `docker exec` หาไฟล์ไม่เจอ ให้รัน `export MSYS_NO_PATHCONV=1` ก่อนทำตามคำสั่งในเอกสารนี้
+| 3. network และ certificate | เครื่อง production, Splunk | |
+| 4. CI variables | GitLab project Backend | |
+| 5. ตรวจว่าใช้ได้ | job `check_splunk` | |
 
 ---
 
@@ -35,19 +30,15 @@ soc-core-worker ──MCP── saia_generate_spl ──► SPL           (Text-
 Splunk MCP Server app คือ **MCP server** ที่เก็บ tool ไว้ และ Text-to-SPL ทำงานในฝั่ง Splunk
 (Splunk AI Assistant) ไม่ใช่ฝั่งเรา `saia_generate_spl` มีหน้าที่แค่*เขียน* SPL แล้วส่งกลับมา ไม่ได้รันเอง
 การรันเป็น call ที่สอง SPL จึงต้องผ่าน Backend ก่อน และ `spl-guard` ตรวจตรงนั้นก่อนสั่งรัน
-ใน production ไม่มีอะไรคั่นระหว่าง Backend กับ Splunk
+ไม่มีอะไรคั่นระหว่าง Backend กับ Splunk
 
-ชื่อ tool ทั้งสอง, argument และ path `/services/mcp` เป็นของ Splunk MCP Server app เอง และ mock
-ก็ใช้ชื่อเดียวกัน เวลาสลับระหว่าง dev, lab และ production จึงแก้แค่ `.env` ไม่ต้องแก้โค้ด
-
-| | mock (dev) | Splunk ใน lab | production |
-| --- | --- | --- | --- |
-| MCP server | `soc-mcp-splunk` (`SPLUNK_MODE=mock`) | MCP Server app ใน container `splunk` | MCP Server app บน search head |
-| `SPLUNK_MCP_URL` | `http://soc-mcp-splunk:8200/services/mcp` | `https://splunk:8089/services/mcp` | `https://<search-head>:8089/services/mcp` |
-| `SPLUNK_MCP_TOKEN` | ว่าง (ใช้ `MCP_AUTH_TOKEN`) | encrypted token จากแอป | encrypted token จากแอป (CI variable) |
-| `NODE_EXTRA_CA_CERTS` | ไม่ต้องตั้ง | `/certs/splunk-lab-ca.pem` (ดูหัวข้อ 3.2) | CA ของบริษัท |
-| Text-to-SPL | template ที่เติม IP, hash และ `user=` | Splunk AI Assistant (cloud-connected) | Splunk AI Assistant |
-| ข้อมูล | event ปลอม 22 รายการ | index ใน lab | index จริง |
+| | ค่า |
+| --- | --- |
+| MCP server | Splunk MCP Server app บน search head |
+| `SPLUNK_MCP_URL` | `https://<search-head>:8089/services/mcp` |
+| `SPLUNK_MCP_TOKEN` | encrypted token จากแอป (CI variable) |
+| `NODE_EXTRA_CA_CERTS` | `/app/certs/<ca>.pem` CA ของบริษัท (ดูหัวข้อ 3.2) |
+| Text-to-SPL | Splunk AI Assistant (cloud-connected, Agent Mode) |
 
 ### สิ่งที่ส่งให้ Text-to-SPL
 
@@ -79,7 +70,7 @@ catalogue ([splunk-catalog.md](splunk-catalog.md)) และช่วงเว�
 
 ## 1. ติดตั้งแอปบน Splunk
 
-ต้องติดตั้งสองแอปบน search head (ใน lab คือ container `splunk`):
+ต้องติดตั้งสองแอปบน search head:
 
 | แอป | Splunkbase | ใช้ทำอะไร |
 | --- | --- | --- |
@@ -88,7 +79,6 @@ catalogue ([splunk-catalog.md](splunk-catalog.md)) และช่วงเว�
 
 ทั้งสองแอปรองรับ Splunk Enterprise และ Splunk Cloud เวอร์ชัน 9.3 ถึง 10.6 แต่ tool กลุ่ม `saia_*`
 จะโผล่ก็ต่อเมื่อเปิด **Agent Mode** แล้ว และ Agent Mode ต้องใช้ **10.1 ขึ้นไป** [3]
-(Splunk ใน lab คือ 10.6.0.5 จึงใช้ได้)
 
 ก่อนเริ่มต้องมี:
 
@@ -96,28 +86,18 @@ catalogue ([splunk-catalog.md](splunk-catalog.md)) และช่วงเว�
 - account ของ splunk.com สำหรับดาวน์โหลดแอปจาก Splunkbase
 - อีเมลที่ทำงาน สำหรับรับ activation code
 
-### 1.1 ติดตั้งผ่าน Splunk Web (วิธีที่ง่ายที่สุด)
+### 1.1 ติดตั้งผ่าน Splunk Web
 
-1. เปิด Splunk Web (lab: `http://localhost:8000` ใช้ user `admin` และรหัสจาก `SPLUNK_PASSWORD`
-   ใน compose ของ lab) แล้วไปที่ **Apps → Find More Apps**
+1. เปิด Splunk Web ของ search head ด้วย account admin แล้วไปที่ **Apps → Find More Apps**
 2. ค้น `MCP Server` → **Install** → ล็อกอินด้วย account ของ splunk.com → ยอมรับ license
 3. ทำแบบเดียวกันกับ `Splunk AI Assistant`
 4. ถ้า Splunk ขอให้ restart ให้กด restart (หรือไปที่ **Settings → Server controls → Restart Splunk**)
 5. เช็กที่ **Apps → Manage Apps** ว่าทั้งสองแอปขึ้นสถานะ Enabled
 
-### 1.2 ติดตั้งจากไฟล์ (กรณี Splunk ออกเน็ตไป Splunkbase ไม่ได้)
+ถ้า search head ออกเน็ตไป Splunkbase ไม่ได้ ดาวน์โหลดไฟล์ `.tgz` ของทั้งสองแอปจาก Splunkbase
+แล้วติดตั้งที่ **Apps → Manage Apps → Install app from file** ทีละไฟล์
 
-ดาวน์โหลดไฟล์ `.tgz` ของทั้งสองแอปจาก Splunkbase แล้วติดตั้งทีละไฟล์:
-
-```bash
-docker cp <ไฟล์แอป>.tgz splunk:/tmp/
-docker exec -it -u splunk splunk /opt/splunk/bin/splunk install app /tmp/<ไฟล์แอป>.tgz   # ถาม user และรหัส admin
-docker exec -u splunk splunk /opt/splunk/bin/splunk restart
-```
-
-ถ้าใช้ Git Bash แล้วเจอ `the input device is not a TTY` ให้เติม `winpty` หน้าคำสั่งที่มี `-it`
-
-### 1.3 เปิดใช้ Splunk AI Assistant (cloud-connected)
+### 1.2 เปิดใช้ Splunk AI Assistant (cloud-connected)
 
 ติดตั้งแอปแล้วยังใช้งานไม่ได้จนกว่าจะ onboard เสร็จ ระหว่างนั้น Splunk ต้องออก activation code ให้ก่อน [2]
 
@@ -161,20 +141,15 @@ docker exec -u splunk splunk /opt/splunk/bin/splunk restart
 แล้วออก token:
 
 - token authentication ต้องเปิดอยู่ (**Settings → Tokens → Enable Token Authentication** ไม่ต้อง restart) [13]
-  lab นี้เปิดไว้แล้ว และ token มีอายุ default `+30d`
 - ออก token ใน**แอป Splunk MCP Server** → generate encrypted token ให้ service account → ตั้งวันหมดอายุ
   → **คัดลอกทันที เพราะแสดงแค่ครั้งเดียว** token แบบนี้ใช้กับ MCP ได้อย่างเดียว เอาไปเรียก REST API ตรงไม่ได้ [6]
 - คนที่ออก token ให้ account อื่นต้องมี `edit_tokens_all` และ `mcp_tool_admin` (ถ้าออกให้ตัวเองใช้
   `edit_tokens_own` และ `mcp_tool_admin`) [6] ส่วน service account เองใช้แค่ `mcp_tool_execute`
 - จดวันหมดอายุไว้ในปฏิทินของทีม เพราะเมื่อหมดอายุ ทุก lookup จะ fail ด้วย 401 ตอน connect
-  และหน้า job จะแสดงข้อความนี้
+  หน้า job จะแสดงข้อความนี้ และ `check_splunk` หลัง deploy ถัดไปจะขึ้น ⚠
 - ถ้า token หลุด หน้า settings ของแอปมีปุ่ม **Invalidate Keys** ที่ยกเลิก MCP token ทุกตัวพร้อมกัน [6]
 
-เอา token ไปใส่ที่:
-
-- lab: `SPLUNK_MCP_TOKEN=<token>` ใน `Backend/.env`
-- production: CI variable `SPLUNK_MCP_TOKEN` ของ project Backend (masked และ protected)
-  ห้าม commit และห้ามใส่ใน `MCP-Server/.env`
+เอา token ไปใส่ที่ CI variable `SPLUNK_MCP_TOKEN` ของ project Backend (Protected และ Masked) ห้าม commit
 
 ถ้า tool ตอบว่าไม่มีสิทธิ์ตอนตรวจในหัวข้อ 5 ให้เพิ่ม capability ทีละตัวตามที่ข้อความบอก
 แทนการ inherit role `user` หรือ `power` ทั้งก้อน
@@ -185,23 +160,14 @@ docker exec -u splunk splunk /opt/splunk/bin/splunk restart
 
 ### 3.1 Network
 
-- **เส้นทาง:** `soc-core-worker` → Splunk **TCP 8089** worker เป็น container เดียวที่เรียก Splunk
-  (ถ้า Splunk อยู่นอก Docker อย่างใน production Splunk จะเห็น IP ของเครื่อง Docker host)
-- **DNS:** ชื่อใน `SPLUNK_MCP_URL` ต้อง resolve ได้จากใน container
-- **Splunk Cloud:** endpoint อยู่บน management port จึงต้องเพิ่ม egress IP ของเครื่อง Backend
+- **เส้นทาง:** `soc-core-worker` บนเครื่อง `10.40.35.18` → search head **TCP 8089** worker เป็น container
+  เดียวที่เรียก Splunk และเรียกตรง ไม่ผ่าน proxy ของ office ฝั่ง Splunk และ firewall ระหว่างทางจะเห็น
+  IP ต้นทางเป็น `10.40.35.18` ต้องเปิดเส้นทางนี้ให้
+- **DNS:** ชื่อใน `SPLUNK_MCP_URL` ต้อง resolve ได้จากใน container (container ใช้ DNS ของเครื่อง)
+- **Splunk Cloud:** endpoint อยู่บน management port จึงต้องเพิ่ม egress IP ของเครื่อง production
   ใน IP allow list ชื่อ `search-api` (port 8089 ถูกปิดไว้เป็นค่าเริ่มต้น) [8]
 
-**lab:** container `splunk` อยู่ใน network `purple_lab` ของ Offensive-Detection-Lab
-ต้องต่อเข้า `soc-network` ด้วย worker จึงจะเรียกชื่อ `splunk` ได้
-
-```bash
-docker network create soc-network 2>/dev/null || true
-docker network connect soc-network splunk
-```
-
-การต่อนี้ผูกกับ container ถ้าสั่ง `restart`, `stop` หรือ `start` ยังอยู่ แต่ถ้า container
-ถูกสร้างใหม่ (เช่น `down` แล้ว `up` หรือ `up` หลังแก้ compose) ต้องต่อใหม่ ส่วน port 8089
-ไม่ได้ publish ออกมาที่ host และไม่จำเป็นต้อง publish
+ผลข้อ 1 ของ `check_splunk` บอกได้ว่าเส้นทางนี้ใช้ได้ไหม (หัวข้อ 5)
 
 ### 3.2 Certificate
 
@@ -216,148 +182,94 @@ Node ตรวจทั้ง CA และชื่อ: ชื่อใน `SPLU
   จะเชื่อได้ และ `NODE_EXTRA_CA_CERTS` มีผลกับทุกการเชื่อมต่อของ worker ไม่ใช่แค่ Splunk
 - ใน `mcp.conf` ของแอปมี `ssl_verify` (ค่า default `true`) ให้ปล่อยไว้แบบนั้น [6]
 
-**production:** ขอ CA ที่เซ็น cert ของ port 8089 จากทีม Splunk เอาไฟล์ (PEM) ไปไว้ใน `Backend/certs/`
-แล้วตั้ง `NODE_EXTRA_CA_CERTS=/certs/<file>.pem` ใน `Backend/.env` ถ้าทีม Splunk ยังใช้ cert
-default อยู่ [10] ต้องขอให้เปลี่ยนเป็น cert ที่มีชื่อ search head อยู่ใน SAN ก่อน
+ขอ CA ที่เซ็น cert ของ port 8089 จากทีม Splunk ถ้าทีม Splunk ยังใช้ cert default อยู่
+(`CN=SplunkServerDefaultCert` ไม่มี SAN) [10] ต้องขอให้เปลี่ยนเป็น cert ที่มีชื่อ search head อยู่ใน SAN ก่อน
+แล้วทำสองอย่าง:
 
-**lab:** cert ที่ Splunk สร้างเองบน 8089 คือ `CN=SplunkServerDefaultCert` ไม่มี SAN และเซ็นด้วย
-`SplunkCommonCA` ถ้าเรียกด้วยชื่อ `splunk` จะได้ error นี้
+1. **commit** ไฟล์ (PEM) ไว้ที่ `certs/<file>.pem` ใน repo Backend ไฟล์นี้เป็น cert สาธารณะ ไม่มี key
+   ตอน deploy ไฟล์นี้ถูก build เข้า image ที่ `/app/certs/`
+2. ตั้ง CI variable `NODE_EXTRA_CA_CERTS=/app/certs/<file>.pem`
 
-```
-certificate subject name 'SplunkServerDefaultCert' does not match target hostname 'splunk'
-```
+> ใช้ path `/app/certs/...` เท่านั้น `./certs` ใน `docker-compose.yml` เป็น bind mount ซึ่ง Docker
+> บนเครื่อง production หา path ไม่เจอ (checkout ของ job ไม่ได้อยู่บนเครื่องนั้น) จึง mount
+> โฟลเดอร์ว่างที่ `/certs` แทน Node จะข้ามไฟล์ที่หาไม่เจอ แล้วทุกการต่อจะ fail ด้วย error เรื่อง certificate
 
-ทางแก้คือออก cert ใหม่ให้ splunkd ที่มี SAN `splunk` แล้วเซ็นด้วย CA ที่สร้างไว้ใช้เฉพาะ lab นี้
-และลบ private key ของ CA ทิ้งทันทีหลังเซ็น CA นี้จึงรับรองได้แค่ cert ใบเดียว
-ส่วน KV store ให้ใช้ cert เดิมต่อไป (KV store ใช้ `serverCert` ตัวเดียวทั้งฝั่ง server และ client
-และตรวจกับ `cacert.pem` เดิม ถ้าย้ายไปใช้ cert ใหม่จะต่อกันไม่ได้)
-
-```bash
-docker exec -i -u splunk splunk sh -s <<'SH'
-set -eu
-SPLUNK=/opt/splunk/bin/splunk
-O="$SPLUNK cmd openssl"
-D=/opt/splunk/etc/auth/soc
-C=/opt/splunk/etc/system/local/server.conf
-
-# key ใหม่ใช้รหัสเดียวกับ [sslConfig] sslPassword ที่ตั้งอยู่แล้ว จึงไม่ต้องแก้ค่านั้น
-KEYPASS=$($SPLUNK show-decrypted --value "$(sed -n '/^\[sslConfig\]/,/^\[/s/^sslPassword *= *//p' "$C")")
-
-mkdir -p "$D" && chmod 700 "$D"
-T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; cd "$T"   # key ของ CA อยู่แค่ในโฟลเดอร์นี้ แล้วถูกลบตอนจบ
-
-$O req -x509 -newkey rsa:3072 -noenc -keyout ca.key -out ca.pem -days 1825 -sha256 \
-  -subj "/O=SOC lab/CN=SOC lab CA for splunk:8089" \
-  -addext "basicConstraints=critical,CA:TRUE,pathlen:0" -addext "keyUsage=critical,keyCertSign,cRLSign"
-$O req -new -newkey rsa:2048 -keyout server.key -passout "pass:$KEYPASS" \
-  -out server.csr -subj "/O=SOC lab/CN=splunk"
-printf '%s\n' 'basicConstraints=critical,CA:FALSE' 'keyUsage=critical,digitalSignature,keyEncipherment' \
-  'extendedKeyUsage=serverAuth,clientAuth' 'subjectAltName=DNS:splunk,DNS:localhost,IP:127.0.0.1' > ext.cnf
-$O x509 -req -in server.csr -CA ca.pem -CAkey ca.key -CAcreateserial -days 825 -sha256 \
-  -extfile ext.cnf -out server.crt
-
-cat server.crt server.key ca.pem > "$D/splunkd.pem" && chmod 600 "$D/splunkd.pem"
-cp ca.pem "$D/soc-lab-ca.pem"
-
-cp "$C" "$C.bak-soc-$(date +%Y%m%d%H%M%S)"
-grep -q '^serverCert *= *\$SPLUNK_HOME/etc/auth/soc/splunkd.pem' "$C" ||
-  sed -i '/^\[sslConfig\]/a serverCert = $SPLUNK_HOME/etc/auth/soc/splunkd.pem' "$C"
-grep -q '^\[kvstore\]' "$C" ||
-  printf '\n[kvstore]\nserverCert = $SPLUNK_HOME/etc/auth/server.pem\n' >> "$C"
-SH
-
-docker exec -u splunk splunk /opt/splunk/bin/splunk restart
-```
-
-ตรวจหลัง restart (ให้รันจากโฟลเดอร์ `Backend`):
-
-```bash
-# 8089 ต้องใช้ cert ที่มีชื่อ splunk แล้ว
-docker exec -u splunk splunk sh -c '/opt/splunk/bin/splunk cmd openssl s_client -connect 127.0.0.1:8089 </dev/null 2>/dev/null \
-  | /opt/splunk/bin/splunk cmd openssl x509 -noout -subject -ext subjectAltName'
-
-# KV store ต้องยัง ready (คำสั่งจะถาม user และรหัส admin)
-docker exec -it -u splunk splunk /opt/splunk/bin/splunk show kvstore-status
-
-# เอา CA (ไฟล์สาธารณะ ไม่มี key) ไปไว้ให้ Backend
-docker exec -u splunk splunk cat /opt/splunk/etc/auth/soc/soc-lab-ca.pem > certs/splunk-lab-ca.pem
-
-# จาก soc-network ถ้าได้ 401 แปลว่าชื่อและ CA ผ่านแล้ว (ที่ได้ 401 เพราะยังไม่ได้ส่ง token)
-docker run --rm -i --network soc-network --entrypoint sh curlimages/curl -c \
-  'cat > /tmp/ca.pem && curl -sS -o /dev/null -w "%{http_code}\n" --cacert /tmp/ca.pem https://splunk:8089/services/mcp' \
-  < certs/splunk-lab-ca.pem
-```
-
-`certs/splunk-lab-ca.pem` เป็นไฟล์ของ lab นี้เท่านั้น ห้าม commit
-
-ถ้าต้องการย้อนกลับ ให้คืน `server.conf` จากไฟล์ backup แล้ว restart:
-
-```bash
-docker exec -u splunk splunk sh -c 'cd /opt/splunk/etc/system/local && cp "$(ls -t server.conf.bak-soc-* | head -1)" server.conf'
-docker exec -u splunk splunk /opt/splunk/bin/splunk restart
-```
+ถ้า ThreatQ หรือ Confluence ใช้ CA อื่น ต่อไฟล์ PEM หลายใบเป็นไฟล์เดียวแล้วชี้ไปที่ไฟล์นั้น
 
 ---
 
-## 4. ค่าใน `Backend/.env`
+## 4. CI variables
+
+ทั้งหมดเป็น CI variable ของ project Backend แก้แล้วต้อง deploy ใหม่ (**Run pipeline** บน `main`)
+เพราะ container อ่าน `.env` ตอนถูกสร้างเท่านั้น
 
 | ตัวแปร | ค่า | หมายเหตุ |
 | --- | --- | --- |
-| `SPLUNK_MCP_URL` | lab: `https://splunk:8089/services/mcp`<br>production: `https://<search-head>:8089/services/mcp` | ถ้าใส่แค่ base URL เช่น `https://splunk:8089` ระบบจะเติม `/services/mcp` ให้ |
-| `SPLUNK_MCP_TOKEN` | encrypted token จากหัวข้อ 2 | ถ้าเว้นว่าง ระบบจะส่ง `MCP_AUTH_TOKEN` (ของ mock) แทน แล้ว Splunk จะตอบ 401 |
-| `NODE_EXTRA_CA_CERTS` | lab: `/certs/splunk-lab-ca.pem`<br>production: `/certs/<ca>.pem` | ดูหัวข้อ 3.2 |
-| `SPLUNK_SEARCH_TIMEOUT` | `120` | วินาทีต่อ MCP call หนึ่งครั้ง Text-to-SPL ใช้เวลาหลายสิบวินาที และ Splunk หยุด search ที่ 1 นาทีอยู่แล้ว [3] |
-| `SPLUNK_MAX_COUNT` | `200` | จำนวนแถวที่เก็บต่อ requirement (Splunk คืนได้ไม่เกิน 1000 event) [3] |
-| `SPLUNK_LOOKUP_MODE` | `manual` | `manual` คือรอ analyst กดปุ่ม, `auto` คือรันทุก alert, `off` คือปิด stage 2 |
+| `SPLUNK_MCP_URL` | `https://<search-head>:8089/services/mcp` | **ต้องตั้ง** ค่า default ใน `.env.example` ชี้ไปที่ตัวที่ไม่มีบน production ถ้าใส่แค่ base URL เช่น `https://<search-head>:8089` ระบบจะเติม `/services/mcp` ให้ |
+| `SPLUNK_MCP_TOKEN` | encrypted token จากหัวข้อ 2 | Protected + Masked ถ้าเว้นว่าง Splunk จะตอบ 401 |
+| `NODE_EXTRA_CA_CERTS` | `/app/certs/<ca>.pem` | ดูหัวข้อ 3.2 |
+| `SPLUNK_SEARCH_TIMEOUT` | `120` (default) | วินาทีต่อ MCP call หนึ่งครั้ง Text-to-SPL ใช้เวลาหลายสิบวินาที และ Splunk หยุด search ที่ 1 นาทีอยู่แล้ว [3] |
+| `SPLUNK_MAX_COUNT` | `200` (default) | จำนวนแถวที่เก็บต่อ requirement (Splunk คืนได้ไม่เกิน 1000 event) [3] |
+| `SPLUNK_LOOKUP_MODE` | `manual` (default) | `manual` คือรอ analyst กดปุ่ม, `auto` คือรันทุก alert, `off` คือปิด stage 2 (ใช้ระหว่างที่ Splunk ยังไม่พร้อม) |
 | `SPLUNK_MCP_GENERATE_ARG` | เว้นว่าง | ชื่อ argument ที่ `saia_generate_spl` ใช้รับข้อความ Splunk ไม่ได้บอกไว้ Backend จึงอ่านจาก schema ของ tool เอง ให้ตั้งค่านี้เฉพาะเมื่ออ่านไม่ได้ |
 | `SPLUNK_MCP_GENERATE_TOOL` / `SPLUNK_MCP_QUERY_TOOL` | เว้นว่าง (ใช้ค่า default) | ตั้งเฉพาะเมื่อ Splunk เปลี่ยนชื่อ tool |
 
-production ไม่ใช้ `MCP_AUTH_TOKEN`
-
-container อ่าน `.env` ตอนถูกสร้างเท่านั้น แก้แล้วต้องสร้าง worker ใหม่ด้วย compose file ที่ใช้อยู่
-เช่น `docker compose up -d soc-core-worker` (คำสั่ง `restart` จะไม่อ่าน `.env` ใหม่)
-
-**catalogue** job `export_catalog` ใน CI เรียก REST API ของ Splunk โดยตรง (ไม่ผ่าน MCP) จึงต้องตั้ง
+**catalogue** job `export_catalog` เรียก REST API ของ Splunk โดยตรง (ไม่ผ่าน MCP) จึงต้องตั้ง
 CI variable `SPLUNK_URL` และ `SPLUNK_TOKEN` แยก โดย `SPLUNK_TOKEN` เป็น token **ธรรมดา**
 ของ service account เดียวกัน เพราะ encrypted token ของ MCP ใช้ได้กับ MCP เท่านั้น [6]
 รายละเอียดอยู่ใน [splunk-catalog.md](splunk-catalog.md)
 
 ---
 
-## 5. ตรวจว่าใช้ได้
+## 5. ตรวจว่าใช้ได้: job `check_splunk`
 
-รันจาก container ที่จะเรียก Splunk จริง ด้วยค่าจริง:
+ไม่มีใครรัน docker บนเครื่อง production ได้ การตรวจจึงอยู่ใน pipeline ของ Backend สอง job ที่รันใน
+`soc-core-worker` ตัวที่ deploy อยู่ (config, network และ CA เดียวกับ lookup จริง) อ่านอย่างเดียว
+และไม่พิมพ์ token:
 
-```bash
-docker exec soc-core-worker node dist/scripts/splunk-mcp-check.js
+| job | รันเมื่อ | ทำอะไร |
+| --- | --- | --- |
+| `check_splunk` | **เองทุกครั้งหลัง `deploy_production` บน `main`** | ข้อ 1 และ 2 ด้านล่าง |
+| `check_splunk_requirement` | กด ▶ แล้วใส่ `SPLUNK_CHECK_REQUIREMENT` ในหน้า Run job | ข้อ 1, 2 และ 3 |
+
+1. curl ไปที่ `SPLUNK_MCP_URL` ด้วย CA ชุดเดียวกับ worker โดยไม่ส่ง token ถ้าได้ **`HTTP 401`** แปลว่า
+   network และ certificate ผ่าน ถ้าได้อย่างอื่น curl จะบอกสาเหตุชัดกว่า `fetch failed` ของ Node
+   เช่น `Could not resolve host` (DNS), `Connection timed out` (firewall),
+   `SSL certificate problem` (CA หรือชื่อใน cert)
+2. เช็ก token, ไฟล์ CA ที่ตั้งไว้มีอยู่จริงไหม และ MCP server มีทั้งสอง tool ไหม
+3. ส่ง requirement ข้อนั้น (เช่น `Failed VPN logins in the last hour`) ผ่านเส้นทางจริงทั้งหมด
+   (generate → ตรวจ → รัน) แล้วพิมพ์ prompt ที่ส่ง, SPL ที่รัน และแถวที่ได้
+
+**Splunk ล่มต้องไม่ทำให้ระบบล่มตาม** ทั้งสอง job ตั้ง `allow_failure` ไว้ ถ้า fail จะขึ้น ⚠ พร้อมเหตุผลใน log
+แต่ pipeline และ deploy ก่อนหน้ายังผ่าน ส่วนอื่นของระบบ (stage 1) ทำงานได้โดยไม่ต้องมี Splunk
+
+ผลที่ต้องได้:
+
 ```
-
-```
-endpoint       https://splunk:8089/services/mcp
+== 1. Network and certificate (no token sent: HTTP 401 means both are fine) ==
+HTTP 401
+== 2. MCP: token, CA and tools ==
+endpoint       https://<search-head>:8089/services/mcp
 token          set (… chars)
 tools          saia_generate_spl, splunk_run_query
-extra CA       /certs/splunk-lab-ca.pem
+extra CA       /app/certs/<ca>.pem (found)
 connected      yes — both tools found; Text-to-SPL takes the request in "<arg>"
-```
-
-จากนั้นลองส่ง requirement หนึ่งข้อผ่านเส้นทางเดียวกับ lookup จริง (generate → ตรวจ → รัน)
-คำสั่งนี้อ่านอย่างเดียว:
-
-```bash
-docker exec soc-core-worker node dist/scripts/splunk-mcp-check.js "Failed VPN logins in the last hour"
 ```
 
 | ถ้าเจอ | สาเหตุที่พบบ่อย |
 | --- | --- |
-| `cannot connect … fetch failed` | ต่อไม่ถึงหรือ TLS ไม่ผ่าน fetch ของ Node รายงานทุกกรณีด้วยข้อความเดียวกัน ให้ใช้คำสั่ง curl ในหัวข้อ 3.2 ซึ่งบอกสาเหตุได้ชัดกว่า |
-| `ECONNREFUSED` / `ETIMEDOUT` / `ENOTFOUND` | route, firewall, DNS หรือ IP allow list ของ Splunk Cloud ถ้าเป็น lab อาจยังไม่ได้ `docker network connect` |
-| `self-signed certificate` / `unable to verify the first certificate` / `unable to get local issuer certificate` | ไม่ได้ตั้ง `NODE_EXTRA_CA_CERTS` หรือตั้งเป็น CA ผิดตัว |
-| `does not match target hostname` / `Hostname/IP does not match certificate's altnames` | ชื่อใน `SPLUNK_MCP_URL` ไม่อยู่ใน SAN ของ cert ถ้าเป็น lab แปลว่ายังไม่ได้ทำหัวข้อ 3.2 |
+| `cannot connect … fetch failed` | ต่อไม่ถึงหรือ TLS ไม่ผ่าน fetch ของ Node รายงานทุกกรณีด้วยข้อความเดียวกัน ดูผลข้อ 1 ซึ่งบอกสาเหตุได้ชัดกว่า |
+| `ECONNREFUSED` / `ETIMEDOUT` / `ENOTFOUND` / `Connection timed out` / `Could not resolve host` | route, firewall ระหว่าง `10.40.35.18` กับ search head, DNS หรือ IP allow list ของ Splunk Cloud (หัวข้อ 3.1) |
+| `self-signed certificate` / `unable to verify the first certificate` / `unable to get local issuer certificate` / `SSL certificate problem` | ไม่ได้ตั้ง `NODE_EXTRA_CA_CERTS` หรือตั้งเป็น CA ผิดตัว |
+| `extra CA … (MISSING …)` / `NODE_EXTRA_CA_CERTS=… is not in the container` | ไฟล์ที่ `NODE_EXTRA_CA_CERTS` ชี้ไม่มีใน image ต้องเป็น `/app/certs/...` และ commit ไฟล์ไว้ใน `certs/` แล้ว (หัวข้อ 3.2) |
+| `does not match target hostname` / `Hostname/IP does not match certificate's altnames` | ชื่อใน `SPLUNK_MCP_URL` ไม่อยู่ใน SAN ของ cert (หัวข้อ 3.2) |
+| `SPLUNK_MCP_URL is not set` หรือ endpoint เป็น `soc-mcp-splunk` | ยังไม่ได้ตั้ง CI variable `SPLUNK_MCP_URL` |
 | `cannot connect … 401` | token ผิด หมดอายุ หรือไม่ได้ออกจากแอป MCP Server หรือ `SPLUNK_MCP_TOKEN` ยังว่าง |
 | `has no saia_generate_spl` | ยังไม่ได้ติดตั้งหรือ activate Splunk AI Assistant, Agent Mode ยังปิด หรือยังไม่ได้ map role กับ tool ในแท็บ Tools |
 | `returned no SPL` | Text-to-SPL ตอบในรูปแบบที่ Backend อ่านไม่ออก ดูหัวข้อ 6 |
 | `the generated SPL uses 'delete'` (หรือคำสั่งเขียน/ส่งข้อมูลออกตัวอื่น) | Text-to-SPL เขียน search ที่เขียน ลบ หรือส่งข้อมูลออก และถูกปฏิเสธก่อนรัน |
 | ได้ 0 แถวจาก index ที่ควรมีข้อมูล | role อ่าน index นั้นไม่ได้ (`srchIndexesAllowed`) หรือ search ไม่ได้ระบุ index และ `srchIndexesDefault` ไม่มี index นั้น |
+| `No such container: soc-core-worker` | Backend ยังไม่ได้ deploy หรือ deploy ล่าสุด fail ก่อน step Start |
 
 ---
 
@@ -375,21 +287,8 @@ docker exec soc-core-worker node dist/scripts/splunk-mcp-check.js "Failed VPN lo
 - `splunk_run_query` ไม่รับช่วงเวลาเป็น argument ถ้า Text-to-SPL ไม่ได้ใส่ช่วงเวลามา Backend
   จะเขียนช่วงเวลาของ alert ลงใน SPL เป็น `earliest=`/`latest=` แบบ epoch ให้
 
-ทั้ง `spl-guard.ts`, guardrail ของ Splunk และ denylist ใน mock ไม่ใช่ตัวควบคุมหลัก
+ทั้ง `spl-guard.ts` และ guardrail ของ Splunk ไม่ใช่ตัวควบคุมหลัก
 **role ของ token ต้องเขียนข้อมูลและอ่าน index อื่นไม่ได้อยู่ดี** (หัวข้อ 2)
-
----
-
-## Splunk ใน lab: ข้อควรรู้
-
-- image `splunk/splunk:latest` ตอนนี้คือ **10.6.0.5** ถ้า pull ใหม่อาจได้เวอร์ชันอื่น
-  ถ้าต้องการล็อกเวอร์ชันให้เปลี่ยน compose ของ lab เป็น `splunk/splunk:10.6.0.5`
-- license เป็น **Enterprise trial หมดอายุ 2 ธ.ค. 2026** หลังจากนั้น Splunk จะเปลี่ยนไปใช้ Free license
-  ซึ่งไม่มีระบบ user และ role ทำให้ token และ MCP ใช้ไม่ได้ ต้องลง license ใหม่ก่อนวันนั้น
-- `/opt/splunk/etc` และ `/opt/splunk/var` เป็น anonymous volume ถ้าสั่ง `docker compose down`
-  แล้ว `up` จะได้ Splunk ใหม่ที่ว่างเปล่า แอป, token, cert และ onboarding หายหมด
-  (ต้องรอ activation code ใหม่ด้วย) ให้ใช้ `stop`, `start` หรือ `restart` แทน
-- Backend ไปถึง 8089 ผ่าน `soc-network` เท่านั้น (ดูหัวข้อ 3.1)
 
 ---
 
@@ -400,10 +299,10 @@ docker exec soc-core-worker node dist/scripts/splunk-mcp-check.js "Failed VPN lo
 | [`src/modules/enrichment/splunk-mcp.service.ts`](../src/modules/enrichment/splunk-mcp.service.ts) | MCP client: ต่อ, หา tool ทั้งสอง, สร้าง prompt แล้วทำ generate → ตรวจ → รัน |
 | [`src/modules/enrichment/spl-guard.ts`](../src/modules/enrichment/spl-guard.ts) | ตรวจ SPL ระหว่างสอง call และใส่ช่วงเวลาของ alert ถ้า SPL ยังไม่มี |
 | [`src/modules/queue/lookup.processor.ts`](../src/modules/queue/lookup.processor.ts) | stage 2: หนึ่ง MCP session ต่อ lookup และหนึ่งคำตอบต่อ requirement |
-| [`src/scripts/splunk-mcp-check.ts`](../src/scripts/splunk-mcp-check.ts) | สคริปต์ตรวจในหัวข้อ 5 |
+| [`src/scripts/splunk-mcp-check.ts`](../src/scripts/splunk-mcp-check.ts) | สคริปต์ที่ job ในหัวข้อ 5 รัน |
+| [`.gitlab-ci.yml`](../.gitlab-ci.yml) (`check_splunk`, `check_splunk_requirement`) | job ตรวจในหัวข้อ 5 |
 | [`src/config/configuration.ts`](../src/config/configuration.ts) (`splunk`) | ค่าในหัวข้อ 4 |
 | [`catalog/`](../catalog) | catalogue และ lookup plans ดู [splunk-catalog.md](splunk-catalog.md) |
-| [`MCP-Server/Splunk`](../../MCP-Server/Splunk/README.md) | mock สำหรับ dev ใช้ denylist ชุดเดียวกับ `spl-guard.ts` (test ฝั่งนั้นจะ fail ถ้าสองรายการไม่ตรงกัน) |
 
 ---
 

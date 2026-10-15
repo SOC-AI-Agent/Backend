@@ -80,7 +80,9 @@ services:
       # The data catalogue is not mounted: it is in the image (catalog/ ->
       # /catalog, see the Dockerfile).
       # The internal CA for Splunk, ThreatQ and Confluence, named by
-      # NODE_EXTRA_CA_CERTS in .env. Empty unless a PEM is put there.
+      # NODE_EXTRA_CA_CERTS in .env. Empty unless a PEM is put there — and
+      # always empty on the production host, where the deploy's checkout is
+      # not; production names the copy built into the image (/app/certs).
       - ./certs:/certs:ro
     depends_on:
       soc-db: {condition: service_healthy}

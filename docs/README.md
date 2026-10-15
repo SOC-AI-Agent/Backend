@@ -1,51 +1,47 @@
 # เอกสาร
 
+เอกสารชุดนี้เขียนสำหรับ **production** คือเครื่อง `10.40.35.18` ที่ deploy ผ่าน GitLab CI
+ทุกขั้นตอนทำผ่าน CI variable และ job ในหน้า pipeline เท่านั้น ไม่มีขั้นตอนไหนต้องเข้า shell
+ของเครื่อง
+
 | อ่านอันไหน | เมื่อ |
 | --- | --- |
-| **[setup.md](setup.md)** | ตั้งระบบตั้งแต่ศูนย์ |
-| **[tokens.md](tokens.md)** | token แต่ละตัวมาจากไหน ใส่ตรงไหน เปลี่ยนยังไง |
-| **[testing.md](testing.md)** | คำตอบของ agent ดูผิด ต้องหาว่าผิดตรงไหน |
-| **[splunk-mcp.md](splunk-mcp.md)** | ต่อ Backend กับ Splunk ตัวจริงผ่าน MCP — ติดตั้งแอป, token, network/certificate, ตรวจ |
-| **[splunk-catalog.md](splunk-catalog.md)** | เตรียม Splunk ก่อนใช้จริง — ดึง index/sourcetype/field มาให้ agent ค้นถูก |
-| **[restructure.md](restructure.md)** | อะไรเปลี่ยนไปบ้าง และทำไม |
+| **[setup.md](setup.md)** | ขึ้นระบบบน production ตั้งแต่ศูนย์: ลำดับ deploy, CI variable, agent, alert แรก |
+| **[tokens.md](tokens.md)** | token แต่ละตัวมาจากไหน ตั้งเป็น CI variable ชื่ออะไร เปลี่ยนยังไง |
+| **[splunk-mcp.md](splunk-mcp.md)** | ต่อ stage 2 กับ Splunk: แอป, service account, network, certificate, job `check_splunk` |
+| **[splunk-catalog.md](splunk-catalog.md)** | ดึง index/sourcetype/field จาก Splunk ด้วย job `export_catalog` ให้ agent ค้นถูกที่ |
+| **[testing.md](testing.md)** | ผลค้น Splunk ดูผิด ต้องไล่ว่าผิดที่ชั้นไหน |
+| [restructure.md](restructure.md) | บันทึกการปรับโครงสร้างครั้งก่อน ๆ ว่าเปลี่ยนอะไรและทำไม |
+| [legacy-manual.md](legacy-manual.md) | คู่มือของระบบ FastAPI เดิม เก็บไว้อ้างอิงเท่านั้น |
 
-เอกสารของแต่ละ service อยู่ในโฟลเดอร์ของมันเอง:
-[backend](../backend/README.md) ·
-[ai-service](../ai-service/README.md) ·
-[MCP Splunk (mock)](../../MCP-Server/Splunk/README.md) ·
-[MCP ThreatQ](../mcp-server/Threatq/README.md) ·
-[Agent-Server](../../Agent-Server/readme.md) (agent platform — repo แยก คนละ network, ดู `ai-service/README.md` หัวข้อ "Agent-Server")
+repo อื่นของระบบอยู่ในกลุ่มเดียวกันบน GitLab และมี README ของตัวเอง ได้แก่ **AI-Service**,
+**Agent-Server** และ **Frontend**
 
 ---
 
 ## เริ่มจากตรงไหน
 
-**เพิ่งมาใหม่** → [setup.md](setup.md) แล้วยิง alert แรกตามข้อ 7
+**ขึ้นระบบครั้งแรก** → [setup.md](setup.md)
 
-**ระบบขึ้นแล้วแต่ job fail** → เช็กว่ามี agent ชื่อตรงกับ `LLM_DEFAULT_AGENT`
-หรือยัง ([setup.md ข้อ 5](setup.md)) นี่คือสาเหตุที่พบบ่อยที่สุด
+**ระบบขึ้นแล้วแต่ job วิเคราะห์ fail** → เช็กว่าใน Agent-Server มี agent ชื่อตรงกับ
+`LLM_SUGGEST_AGENT` แล้วหรือยัง ([setup.md ข้อ 4](setup.md#4-สร้าง-agent-ใน-agent-server))
+นี่คือสาเหตุที่พบบ่อยที่สุด
 
-**agent ตอบว่า "ไม่พบอะไร" ทั้งที่รู้ว่ามีข้อมูล** → ชื่อ field ผิด
-[splunk-catalog.md](splunk-catalog.md) แล้วไล่ตรวจทีละชั้นด้วย
-[testing.md](testing.md)
+**job `check_splunk` ขึ้น ⚠** → อ่าน log ของ job แล้วเทียบกับตารางใน
+[splunk-mcp.md ข้อ 5](splunk-mcp.md#5-ตรวจว่าใช้ได้-job-check_splunk)
 
-**จะต่อ Splunk ตัวจริง** (lab หรือ production) → [splunk-mcp.md](splunk-mcp.md)
+**agent ตอบว่า "ไม่พบอะไร" ทั้งที่รู้ว่ามีข้อมูล** → ชื่อ field ผิด ดู
+[splunk-catalog.md](splunk-catalog.md) แล้วไล่ตรวจทีละชั้นด้วย [testing.md](testing.md)
 
-**จะเอาขึ้น production** → [setup.md ท้ายไฟล์](setup.md) กับ
-[tokens.md หัวข้อสิทธิ์](tokens.md)
+**จะเปิดใช้กับข้อมูลจริง** → [setup.md หัวข้อก่อนเปิดใช้จริง](setup.md#ก่อนเปิดใช้จริง)
+และ [tokens.md หัวข้อสิทธิ์ของ token](tokens.md)
 
 ---
 
 ## ระบบทำงานยังไง
 
-> ⚠️ **ไดอะแกรมนี้เก่ากว่า restructure.md รอบล่าสุด** — วาดไว้ตอน agent ยังเรียก
-> MCP tool ค้น Splunk เองผ่าน `LLM Server`/Ollama ปัจจุบัน Splunk ไม่ผ่าน MCP
-> แล้ว (Backend เขียน SPL เอง ส่งตรงไป connector) agent มี 3 ตัวไม่มี tool เลย
-> และ agent platform คือ `Agent-Server` (repo แยก ไม่ใช่ `LLM Server`/Ollama) —
-> ดู [[soc-flow-design]] ในความจำ หรือ `restructure.md` รอบล่าสุดสำหรับของจริง
-
 ```
-FortiSOAR ──► soc-core-api ──► BullMQ ──► worker
+FortiSOAR ──► soc-core-api ──► BullMQ ──► soc-core-worker
                                             │
                        ┌────────────────────┤  stage 1 ก่อน model ทำงาน (โค้ดล้วน)
                        │  1. ดึง IOC จาก log
@@ -54,12 +50,14 @@ FortiSOAR ──► soc-core-api ──► BullMQ ──► worker
                        │  4. match playbook ◄── soc-ai ◄── Confluence REST API (worker sync ตรง)
                        └────────────────────┤
                                             ▼
-                            soc-ai ──► Agent-Server (suggestion, requirements)
+                    soc-ai ──► Agent-Server: soc-suggest (suggestion), soc-requirements (คำถามถึง Splunk)
                                             │
                        stage 2 (ปุ่ม / auto) ▼
                        requirement (ข้อความ) ──MCP──► saia_generate_spl ──► SPL
                                   spl-guard ตรวจ ──MCP──► splunk_run_query ──► Splunk
-                       dev: soc-mcp-splunk (mock)   prod: Splunk MCP Server app
+                                            │          (Splunk MCP Server app บน search head)
+                                            ▼
+                    soc-ai ──► Agent-Server: soc-conclude (บทวิเคราะห์จากผลค้น)
 ```
 
 **สิ่งที่ deterministic อยู่ในโค้ด ไม่ใช่ใน model** — ดึง IOC, กรอง, lookup
@@ -68,13 +66,8 @@ FortiSOAR ──► soc-core-api ──► BullMQ ──► worker
 **model ตัดสินใจเรื่องเดียว** — หลักฐานพอหรือยัง ต้องค้น log เพิ่มไหม
 
 **model ของเราไม่เขียน query** — stage 2 ส่ง requirement เป็นข้อความให้ Text-to-SPL
-ของ Splunk เขียน SPL แล้ว `spl-guard.ts` ตรวจก่อนรันทุกครั้ง (read-only — index ที่ค้นได้คุมด้วย role ของ token ใน Splunk)
-เพราะ SPL เขียนและลบข้อมูลได้ และ alert text เป็นของที่ผู้โจมตีแต่งได้ — role ของ token
-ใน Splunk ต้องเขียนไม่ได้อยู่ดี ดู [splunk-mcp.md](splunk-mcp.md) หัวข้อ 2
+ของ Splunk เขียน SPL แล้ว `spl-guard.ts` ตรวจก่อนรันทุกครั้ง (อ่านอย่างเดียว) เพราะ SPL เขียน
+และลบข้อมูลได้ และ alert text เป็นของที่ผู้โจมตีแต่งได้ index ที่ค้นได้คุมด้วย role ของ token
+ใน Splunk ซึ่งต้องเขียนข้อมูลไม่ได้อยู่ดี ดู [splunk-mcp.md](splunk-mcp.md) หัวข้อ 2
 
----
-
-## `legacy-manual.md`
-
-คู่มือชุดเดิมจากก่อนแยก backend — ยังอ้าง `soc-backend`, `soc-worker`,
-`init_db.py` ซึ่ง**ไม่มีแล้ว** เก็บไว้อ้างอิงเท่านั้น ของที่ใช้ได้จริงอยู่ในไฟล์อื่น
+**agent ทั้งสามไม่มี tool** — อ่านได้เฉพาะสิ่งที่ Backend ส่งให้ และไม่ต่อ MCP server ตัวไหน

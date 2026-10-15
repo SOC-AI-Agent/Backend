@@ -1,137 +1,158 @@
-# Setup
+# Setup — production
 
-ตั้งระบบตั้งแต่ศูนย์จนวิเคราะห์ alert ได้จริง
+ขึ้นระบบบนเครื่อง production (`10.40.35.18`) ตั้งแต่ศูนย์จนวิเคราะห์ alert ได้จริง
+
+ไม่มีใครเข้า shell ของเครื่องนี้ได้ ทุกอย่างทำผ่าน GitLab: ตั้งค่าใน **Settings → CI/CD → Variables**
+ของแต่ละ project แล้ว deploy ด้วย pipeline บน branch `main` ถ้าต้องดูอะไรบนเครื่อง ให้ใช้ job
+ตรวจใน pipeline (หัวข้อ 2)
 
 ถ้าต้องการรายละเอียดของ token แต่ละตัว: [tokens.md](tokens.md)
-ถ้าตั้งเสร็จแล้วแต่คำตอบดูผิด: [testing.md](testing.md)
+ถ้าตั้งเสร็จแล้วแต่ผลค้น Splunk ดูผิด: [testing.md](testing.md)
 
 ---
 
-## ต้องมีอะไรก่อน
+## ภาพรวม
 
-- Docker + Compose v2
-- **Python 3.12** สำหรับสคริปต์ใน [`scripts/`](../scripts/README.md) — macOS มาพร้อม 3.9
-  ซึ่งเก่าเกินไป ใช้ `python3.12 -m venv .venv` แล้วเรียกผ่าน `.venv/bin/python`
-- RAM อย่างน้อย 16GB (แนะนำ 32GB สำหรับ model 7B ขึ้นไป)
-- Disk 20GB+
-- **GPU ไม่จำเป็น แต่ต่างกันมาก** — บน CPU ล้วน agent run หนึ่งครั้งใช้ 1-5 นาที
+ระบบมี 4 repo แต่ละ repo deploy ตัวเองด้วย job `deploy_production` ซึ่งรันทุกครั้งที่ push ขึ้น `main`
+บน runner tag `llm` ซึ่งติดตั้งอยู่บนเครื่อง production เอง job จึงสั่ง Docker ของเครื่องนั้นได้ตรงๆ
+ทุก job ออกเน็ตผ่าน proxy ของ office (`BUILD_PROXY`, ค่า default ตั้งไว้ใน `.gitlab-ci.yml` แล้ว)
 
-ไม่ต้องมีตอนเริ่ม แต่ต้องมีก่อนใช้จริง: Splunk, ThreatQ, FortiSOAR
-สามอย่างนี้มีตัวทดสอบให้ใช้ระหว่างพัฒนา
+| repo | container | port บนเครื่อง | หน้าที่ |
+| --- | --- | --- | --- |
+| **Agent-Server** | `dall-m-*` | 7100 (admin UI), 8001 (API), 8080 (llama.cpp) | agent platform และ model (Qwen2.5-7B บน llama.cpp) network แยกของตัวเอง |
+| **AI-Service** | `soc-ai` | ไม่เปิด port | ประตูจาก Backend ไป Agent-Server และ index ของ playbook |
+| **Backend** (repo นี้) | `soc-core-api`, `soc-core-worker`, `soc-core-redis`, `soc-test-db` | 8082 | API, คิวงาน, ฐานข้อมูล |
+| **Frontend** | `soc-dashboard` | 3002 | dashboard ของ analyst ส่ง `/auth`, `/v1`, `/admin`, `/docs` ต่อไปที่ `soc-core-api` |
 
----
+Backend, AI-Service และ Frontend คุยกันใน Docker network `soc-network` ด้วยชื่อ container
+`soc-ai` ไปหา Agent-Server ทาง `host.docker.internal:8001`
 
-## 1. ค่าใน `.env`
+บนเครื่องเดียวกันยังมี stack FastAPI ชุดเดิม (`soc-ai-ops`: `soc-db`, `soc-redis`, `soc-backend` :8000,
+`soc-frontend` :3000 และชุด dev :8081, :3001) port ของระบบใหม่จึงตั้งไม่ให้ชนกับชุดนั้น
 
-```bash
-cp .env.example .env
-```
+### ที่อยู่ของแต่ละหน้า
 
-สุ่ม 3 ค่า:
+| | |
+| --- | --- |
+| Dashboard | `http://10.40.35.18:3002` |
+| Backend API | `http://10.40.35.18:8082` (Swagger: `/docs`, สถานะ: `/health`) |
+| Agent-Server admin UI | `http://10.40.35.18:7100` |
+| Agent-Server API | `http://10.40.35.18:8001` (Swagger: `/docs`) |
+| AI-Service | `http://soc-ai:8100` เรียกได้จากใน `soc-network` เท่านั้น ต้องมี `AI_SERVICE_AUTH_TOKEN` |
 
-```bash
-echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
-echo "JWT_SECRET_KEY=$(openssl rand -hex 32)"
-echo "MCP_AUTH_TOKEN=$(openssl rand -hex 32)"
-```
-
-ThreatQ และ Confluence: ใส่ credential จริงใน `THREATQ_*` / `CONFLUENCE_*` (Backend เรียกตรง)
-ปล่อยว่างได้ — summary จะบอกว่า ThreatQ NOT CHECKED และ playbook ไม่ได้ sync
-
-> ⚠️ **`POSTGRES_PASSWORD` ต้องแก้ 2 ที่ให้ตรงกัน** — ตัวมันเองกับใน
-> `CORE_DATABASE_URL` ไม่งั้น Prisma ต่อไม่ติด (`P1000 Authentication failed`)
-
-รายละเอียดครบทุกตัว: [tokens.md](tokens.md)
+ที่อยู่จริงดูได้จาก step **Address** ท้าย `deploy_production` ของแต่ละ repo ซึ่งพิมพ์ IP และ port
+แล้วลองเรียกจากเครื่องเองด้วย ถ้า step นั้นบอกว่า `answers` แต่ browser เปิดไม่ได้ (timeout)
+แปลว่า firewall ของเครื่อง (firewalld) กั้นอยู่ job `inspect_ports` พิมพ์ rule ที่ใช้อยู่ให้ดู
+การเปิด port ต้องให้ผู้ดูแลเครื่องทำ
 
 ---
 
-## 2. ขึ้นระบบ
+## 1. ลำดับ deploy
 
-ขั้นตอนที่เหลือของเอกสารนี้อ้างถึง `AI-Service`, `MCP-Server` ด้วย ไม่ใช่แค่ Backend —
-ใช้ `deploy/dev.yml` (ดู [README](../README.md#running-the-whole-thing-locally)) หรือขึ้นแต่ละ repo เอง:
+| ลำดับ | repo | ดูอะไรใน log ของ deploy |
+| --- | --- | --- |
+| 1 | Agent-Server | step 1 ครั้งแรกโหลด model ราว 35 นาที (พิมพ์ขนาดทุกนาที), step 3 สร้าง admin, step 5 ที่อยู่ของ admin UI |
+| 2 | AI-Service | step Address: `Agent-Server ... answers` |
+| 3 | Backend | step 2 บอกว่าใช้ DB ตัวไหน, step 6 `answers {"status":"ok",...,"ai_service":"up"}` แล้ว `check_splunk` รันต่อ |
+| 4 | Frontend | dashboard ที่ port 3002 |
 
-```bash
-docker compose -f deploy/dev.yml --project-directory . up -d --build
-```
-
----
-
-## 3. Agent-Server (agent platform)
-
-แยกเป็นอีก repo ไม่ได้ขึ้นมาพร้อม `deploy/dev.yml` — ต้องขึ้นเอง (ดู
-[AI-Service/README.md](../../AI-Service/README.md) หัวข้อ "Agent-Server"):
-
-```bash
-cd ../Agent-Server
-cp .env.example .env               # ค่า default ใช้ได้เลย ไม่ต้องแก้
-docker compose up -d --build       # http://localhost:7100
-```
-
-`LLAMA_HF_MODEL` (default `ggml-org/gemma-3-1b-it-GGUF`) โหลดเองตอน container
-ขึ้นครั้งแรก ใช้เวลาสักพักตามความเร็วเน็ต ดูความคืบหน้า: `docker compose logs -f dall-m-llamacpp`
-
-ตั้ง DB, model ตัวแรก และ admin คนแรกของ Agent-Server (คนละระบบกับ admin ของ dashboard นี้):
-
-```bash
-pip install -r script/requirements.txt
-python script/create_db.py
-python script/insert_default_model.py
-python script/add_admin_user.py --username admin --email admin@example.com --password <รหัส>
-```
-
-> ⚠️ `add_admin_user.py` เก็บรหัสเป็น plain text (ยังไม่ hash) — อย่าใช้รหัสที่ใช้จริงที่อื่น
-
-`AI-Service/.env`'s `LLM_SERVER_URL` (default `http://host.docker.internal:8001`)
-ชี้มาที่นี่แล้ว ถ้า Agent-Server รันอยู่เครื่องอื่นต้องแก้ค่านี้
+ลำดับอื่นก็ใช้ได้ (`soc-network` ถูกสร้างโดย deploy ตัวแรกที่รัน) แต่ลำดับนี้ทำให้การตรวจท้าย
+deploy ของแต่ละตัวเจอตัวที่มันต้องเรียกพร้อมแล้ว
 
 ---
 
-## 4. สร้างตารางและ seed
+## 2. CI variables
 
-```bash
-docker compose exec soc-core-api sh scripts/migrate.sh   # สร้าง/อัปเดต schema ตาม prisma/migrations
-docker compose exec soc-core-api npm run seed            # roles only
-```
+ตั้งที่ **Settings → CI/CD → Variables** ของแต่ละ project ค่าที่เป็นความลับให้ติ๊ก **Protected** และ
+**Masked** ตัวแปรแบบ Protected จะเห็นเฉพาะ job บน branch ที่ protected ดังนั้น `main` ต้องเป็น
+protected branch และ environment scope ต้องเป็น All หรือ `production`
 
-`scripts/migrate.sh` เป็นตัวเดียวกับที่ deploy_production ใช้ ไม่ใช้ `prisma db push`
-แล้ว เพราะ push ลบ column ที่ schema ไม่มีโดยไม่ถาม DB local ที่เคยสร้างด้วย
-`db push` ไว้ก่อนมี column ครบแล้ว ให้ mark ว่า apply แล้วก่อน:
+deploy ของ Backend สร้าง `.env` จาก `.env.example` โดยแทนทุก key ที่มี CI variable ชื่อเดียวกัน
+**key ไหนใน `.env.example` ก็ตั้งเป็น CI variable ได้** (เช่น `SPLUNK_LOOKUP_MODE`, `LLM_SUGGEST_AGENT`)
+ยกเว้น `CORE_DATABASE_URL`, `REDIS_URL`, `REDIS_HOST` ที่ deploy เขียนเอง `.env` ไม่ถูกพิมพ์ใน log
+และไม่ถูกเก็บเป็น artifact
 
-```bash
-docker compose exec soc-core-api npx prisma migrate resolve --applied 0_init
-docker compose exec soc-core-api npx prisma migrate resolve --applied 20261014120000_nest_backend
-docker compose exec soc-core-api sh scripts/migrate.sh   # ตรวจว่าตรงกับ schema
-```
+### Backend
 
-ดู [README](../README.md#schema-changes)
+| ตัวแปร | ต้องตั้งไหม | ใช้ทำอะไร |
+| --- | --- | --- |
+| `POSTGRES_PASSWORD` | ต้อง ระหว่างที่ยังไม่มี `PROD_POSTGRES_PASSWORD` | รหัสของ test DB (`soc-test-db`) DB ถูกสร้างด้วยรหัสนี้ใน deploy ครั้งแรก แล้วจำรหัสนั้นไว้ อย่าเปลี่ยนทีหลัง |
+| `PROD_POSTGRES_PASSWORD` | เมื่อพร้อมใช้ DB จริง | ตั้งแล้ว deploy ใช้ `soc-db` ของ production แทน (หัวข้อ 3) |
+| `PROD_POSTGRES_USER`, `PROD_POSTGRES_DB` | ไม่ต้อง (default `socai`) | user และชื่อ DB ของ `soc-db` |
+| `JWT_SECRET_KEY` | **ต้อง** | กุญแจเซ็น session ถ้าไม่ตั้ง จะได้ค่าตัวอย่างใน `.env.example` ซึ่งใครอ่าน repo ก็ปลอม session ได้ และ deploy ไม่เตือน |
+| `AI_SERVICE_AUTH_TOKEN` | **ต้อง** | ตั้งเป็น group variable ตัวเดียว ใช้ร่วมกับ AI-Service |
+| `SPLUNK_MCP_URL`, `SPLUNK_MCP_TOKEN`, `NODE_EXTRA_CA_CERTS` | สำหรับ stage 2 | [splunk-mcp.md](splunk-mcp.md) ค่า default ของ `SPLUNK_MCP_URL` ชี้ไปที่ตัวที่ไม่มีบน production ถ้ายังไม่พร้อม ให้ตั้ง `SPLUNK_LOOKUP_MODE=off` |
+| `THREATQ_*` | สำหรับ ThreatQ | [tokens.md ข้อ 3](tokens.md) ถ้าไม่ตั้ง summary จะบอกว่า ThreatQ NOT CHECKED |
+| `CONFLUENCE_*` | สำหรับ playbook | [tokens.md ข้อ 3.1](tokens.md) ถ้าไม่ตั้ง ทุก alert จะไม่มี playbook |
+| `SPLUNK_URL`, `SPLUNK_TOKEN`, `SSL_CERT_FILE` | สำหรับ `export_catalog` | [splunk-catalog.md](splunk-catalog.md) |
+| `BACKEND_HOST_PORT` | ไม่ต้อง (default 8082) | port ของ API บนเครื่อง เปลี่ยนเฉพาะเมื่อ 8082 ถูกใช้ (`inspect_ports` บอก port ที่ว่าง) |
+| `DEPLOY_HOST` | ไม่ต้อง | ชื่อหรือ IP ที่ step Address ใช้ แทน IP ที่หาเองจาก route ของเครื่อง |
 
-`seed` สร้างแค่ roles ไม่สร้าง user จาก env อีกแล้ว admin คนแรกสร้างเอง
-(รหัสไม่ผ่าน argv และไม่ลง `.env`):
+### repo อื่น
 
-```bash
-read -rsp 'admin password: ' PW; echo
-HASH=$(docker compose exec -T -e PW="$PW" soc-core-api \
-  node -e "require('bcrypt').hash(process.env.PW, 12).then(h => process.stdout.write(h))")
-unset PW
-docker compose exec -T soc-db psql -U socai -d socai -v hash="$HASH" <<'SQL'
-INSERT INTO users (id, username, email, hashed_password, role_id, updated_at)
-SELECT gen_random_uuid(), 'admin', 'admin@soc.example', :'hash', id, now()
-FROM roles WHERE name = 'admin';
-SQL
-```
+| project | ตัวแปรที่ต้องตั้ง |
+| --- | --- |
+| Agent-Server | `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `JWT_SECRET`, `AGENT_ADMIN_PASSWORD`, `NEXT_PUBLIC_BASE_URL` (`http://10.40.35.18:8001`), `NEXT_PUBLIC_LLM_BASE_URL` (`http://10.40.35.18:8080`) ขาดตัวไหน deploy หยุดที่ step 0 พร้อมรายชื่อ |
+| AI-Service | `AI_SERVICE_AUTH_TOKEN` (group variable ตัวเดียวกับ Backend) `LLM_SERVER_URL` ไม่ต้องตั้ง ค่า default `http://host.docker.internal:8001` ชี้ไปที่ Agent-Server บนเครื่องเดียวกันแล้ว |
+| Frontend | ไม่มีตัวที่ต้องตั้ง (`FRONTEND_HOST_PORT` default 3002) |
 
-user คนถัดไปสร้างผ่านหน้า Users ด้วย admin คนนี้
-
-> ⚠️ **ถ้าใช้ volume เดิมที่มีข้อมูลอยู่** Postgres จะไม่รับรหัสใหม่ — มันตั้งรหัส
-> เฉพาะตอน init volume เปล่า เปลี่ยนเองด้วย:
-> ```bash
-> docker compose exec soc-db psql -U socai -d socai \
->   -c "ALTER USER socai WITH PASSWORD '<รหัสใหม่>';"
-> ```
+model ของ Agent-Server ไม่ใช่ CI variable เลือกที่ `llamacpp/preload_models.py` ใน repo Agent-Server
 
 ---
 
-## 5. สร้าง agent
+## 3. Pipeline ของ Backend
+
+| job | stage | รันเมื่อ | ทำอะไร |
+| --- | --- | --- | --- |
+| `build_image`, `code_test` | build, test | ทุก branch | build image, `tsc` |
+| `inspect_db_schema` | inspect | อัตโนมัติบน `main` | โครงสร้าง DB ก่อน deploy (ตาราง, migration, drift) ไม่พิมพ์ข้อมูลหรือรหัส |
+| `inspect_ports` | inspect | อัตโนมัติบน `main` | port ที่แต่ละ container ใช้ ใครถือ port ไหน และ firewall ของเครื่อง |
+| `deploy_production` | deploy | อัตโนมัติบน `main` | step 0–6 ด้านล่าง |
+| `check_splunk` | verify | อัตโนมัติหลัง deploy | ตรวจการต่อ Splunk ([splunk-mcp.md ข้อ 5](splunk-mcp.md#5-ตรวจว่าใช้ได้-job-check_splunk)) |
+| `export_catalog` | deploy | กด ▶ เอง | ดึง catalogue จาก Splunk ([splunk-catalog.md](splunk-catalog.md)) |
+
+job ตรวจทั้งหมด (`inspect_*`, `check_splunk`, `export_catalog`) ตั้ง `allow_failure` ไว้ ถ้า fail
+จะขึ้น ⚠ พร้อมเหตุผลใน log แต่ pipeline และ deploy ยังผ่าน บน protected branch อื่นที่ไม่ใช่ `main`
+job เหล่านี้เป็นปุ่ม ▶
+
+### ขั้นตอนของ `deploy_production`
+
+| step | ทำอะไร | ถ้า fail |
+| --- | --- | --- |
+| 0. Host ports | เช็กว่า port ที่จะ publish ไม่ถูก container ของ stack อื่นถืออยู่ | บอกว่าใครถือ ให้ตั้ง `BACKEND_HOST_PORT` |
+| 1. Build | build image ผ่าน proxy | |
+| 2. Database and Redis | เลือก DB (ด้านล่าง) และขึ้น `soc-core-redis` | test DB: ยังไม่ได้ตั้ง `POSTGRES_PASSWORD` |
+| 3. Backup, schema and roles | backup (เฉพาะ DB จริง), `scripts/migrate.sh`, seed roles | migration ไม่ผ่าน หรือ DB ไม่ตรงกับ `schema.prisma` deploy หยุดก่อน API ตัวใหม่ขึ้น |
+| 4. Start | ขึ้น `soc-core-api` และ `soc-core-worker` | พิมพ์ log 50 บรรทัดท้าย |
+| 5. Health | รอ `/health` จากใน container | |
+| 6. Address | ถาม `/health` ผ่าน IP และ port ของเครื่อง แล้วตั้งลิงก์ environment ของ GitLab | port publish แล้วแต่เรียกจากที่อยู่นั้นไม่ได้ |
+
+### DB ตัวไหน
+
+CI variable `PROD_POSTGRES_PASSWORD` เป็นตัวเลือก:
+
+- **ไม่มี**: test DB ของ Backend เอง (`soc-test-db`, volume `backend_test-postgres-data`) สร้างเปล่า
+  ใน deploy ครั้งแรกด้วย `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` แล้วเก็บไว้ต่อ
+  `soc-db` ของ production ไม่ถูกแตะเลย
+- **มี**: `soc-db` ของ stack FastAPI เดิม พร้อมข้อมูลที่มีอยู่ deploy สั่ง start ถ้ามันหยุดอยู่,
+  ต่อเข้า `soc-network`, **dump ลง volume `backend_db-backups` ก่อนทุกครั้ง** (เก็บ 10 ไฟล์ล่าสุด)
+  แล้วจึง migrate ส่วน `soc-test-db` ถูกหยุด ข้อมูลในนั้นไม่ถูกย้ายมา
+
+ลบ variable ทิ้งก็กลับไปใช้ test DB ได้ ยังไม่มี job สำหรับ restore backup คำสั่ง restore อยู่ใน
+comment ของ step 3 ใน `.gitlab-ci.yml` ต้องทำเป็น job ก่อนใช้
+
+migration ครั้งแรกบน `soc-db` จะ mark `0_init` (โครงสร้างเดิมของ FastAPI) ว่า apply แล้ว แล้วเพิ่มเฉพาะ
+column ใหม่ ไม่ลบอะไร ([README](../README.md#schema-changes))
+
+---
+
+## 4. สร้าง agent ใน Agent-Server
+
+deploy ของ Agent-Server สร้างตาราง, ลงทะเบียน model และสร้าง admin คนแรกให้แล้ว
+(user `AGENT_ADMIN_USERNAME` default `admin` รหัส `AGENT_ADMIN_PASSWORD`) แต่**ไม่ได้สร้าง agent**
+
+> ⚠️ Agent-Server เก็บรหัสเป็น plain text อย่าใช้รหัสที่ใช้ที่อื่น ถ้าเข้าไม่ได้ ใช้ job
+> `check_admin_login` ใน pipeline ของ Agent-Server ดูว่ามี user อะไรบ้างและรหัสถูกไหม
 
 Backend เรียก agent 3 ตัว **ถ้าขาดตัวไหน job จะ fail หรือได้ผลไม่ครบ** ทั้งหมดไม่มี tool และไม่ต่อ MCP server ตัวไหน:
 
@@ -143,6 +164,26 @@ Backend เรียก agent 3 ตัว **ถ้าขาดตัวไหน
 
 การค้น Splunk ไม่ผ่าน agent: Backend ส่งแต่ละ requirement เป็นข้อความไป Text-to-SPL ของ Splunk
 ผ่าน MCP (`saia_generate_spl`) ตรวจ SPL ที่ได้ แล้วสั่งรัน (`splunk_run_query`)
+
+### สร้างที่หน้า admin
+
+เปิด `http://10.40.35.18:7100` ล็อกอินด้วย admin ข้างบน แล้วสร้าง agent 3 ตัวตาม slug ในตาราง
+Model เลือก `Qwen/Qwen2.5-7B-Instruct-GGUF:Q4_K_M` จาก dropdown (deploy ลงทะเบียนไว้ให้)
+แล้วใส่ system prompt
+
+หรือทาง API (ต้อง login เอา JWT ก่อน และต้องรู้ `owner_id`/`model_id` เป็น UUID):
+
+```bash
+AGENT=http://10.40.35.18:8001
+TOKEN=$(curl -s -X POST $AGENT/restful/auth/login -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"<AGENT_ADMIN_PASSWORD>"}' \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
+
+curl -s -X POST $AGENT/restful/agents -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{
+    "slug":"soc-suggest","name":"soc-suggest","owner_id":"<user uuid>",
+    "model_id":"<model uuid>","system_prompt":"<system prompt>"}'
+```
 
 ### รูปแบบคำตอบของ `soc-requirements`
 
@@ -186,75 +227,58 @@ invent a value, and leave out a detail the alert does not have.
 Answer in the ANSWER FORMAT given at the end of the message, and nothing else.
 ```
 
-สร้างที่ Agent-Server (คนละระบบ, คนละ auth กับ dashboard นี้) — ไม่มีไฟล์ JSON ให้ import
-เหมือนเดิม เพราะ agent ของมันเก็บใน Postgres ของมันเอง:
-
-เปิด `http://localhost:7100` ล็อกอินด้วย admin ที่สร้างไว้ในข้อ 3 แล้วสร้าง agent 3 ตัว
-ตาม slug ในตาราง (Model เลือกจาก dropdown ที่ `insert_default_model.py` ลงทะเบียนไว้ ใส่
-system prompt ตามที่ตั้งใจไว้ในตัวเดิม) — `LLM_DEFAULT_AGENT` (default `soc-suggest`)
-มีไว้สำหรับผู้เรียกที่ไม่ระบุชื่อ agent
-
-หรือทาง API (ต้อง login เอา JWT ก่อน, และต้องรู้ `owner_id`/`model_id` เป็น UUID):
-
-```bash
-TOKEN=$(curl -s -X POST localhost:8001/restful/auth/login -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"<รหัส Agent-Server>"}' \
-  | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
-
-curl -s -X POST localhost:8001/restful/agents -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' -d '{
-    "slug":"soc-suggest","name":"soc-suggest","owner_id":"<user uuid>",
-    "model_id":"<model uuid>","system_prompt":"<system prompt เดิม>"}'
-```
-
-Backend ไม่จำกัด index เอง — index ที่ค้นได้คุมด้วย role ของ token ใน Splunk (`srchIndexesAllowed`)
+Backend ไม่จำกัด index เอง index ที่ค้นได้คุมด้วย role ของ token ใน Splunk (`srchIndexesAllowed`)
 ดู [splunk-mcp.md](splunk-mcp.md) หัวข้อ 2
+
+---
+
+## 5. User ของ dashboard
+
+seed สร้างแค่ roles ไม่สร้าง user และไม่มีโค้ดหรือ CI job ไหนสร้าง user จาก environment
+(`DEFAULT_ADMIN_*` ใน `.env.example` สงวนไว้ ไม่มีอะไรอ่าน)
+
+- **DB จริง (`soc-db`)**: user เดิมของระบบ FastAPI ล็อกอินได้ด้วยรหัสเดิม (bcrypt ใช้ร่วมกันได้)
+- **test DB**: ไม่มี user เลย และ**ยังไม่มี job สร้าง admin คนแรก** จึงล็อกอิน dashboard
+  และออก API key ไม่ได้จนกว่าจะเพิ่ม job นั้น หรือย้ายไปใช้ DB จริง
+
+user คนถัดไปให้ admin สร้างที่หน้า **Users** ของ dashboard
 
 ---
 
 ## 6. ตรวจว่าขึ้นครบ
 
-```bash
-curl -s localhost:8082/health    # ai_service: "up"
-docker exec soc-ai python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8100/health').read())"
-                                 # llm_server: true, playbooks: จำนวนที่ index แล้ว
-curl -s localhost:8001/         # Agent-Server: {"status": "ok"} — ไม่มี /health รวม ollama/agents
-docker compose exec soc-mcp-splunk python -c \
-  "import urllib.request; print(urllib.request.urlopen('http://localhost:8200/health').read())"
-```
+| ดูที่ | ผลที่ต้องได้ |
+| --- | --- |
+| Agent-Server deploy step 5 | `API answers`, `llama.cpp answers`, `Admin UI answers` |
+| หน้า **Resources** ของ admin UI Agent-Server | LLM พร้อม และ model ที่ใช้ตอบ |
+| AI-Service deploy step Address | `answers on soc-network` และ `Agent-Server ... answers` |
+| Backend deploy step 6 | `answers {"status":"ok",...,"ai_service":"up"}` |
+| Backend `check_splunk` | ✓ (ถ้า ⚠ ดู log [splunk-mcp.md ข้อ 5](splunk-mcp.md#5-ตรวจว่าใช้ได้-job-check_splunk)) |
+| Frontend | เปิด `http://10.40.35.18:3002` ได้ |
+
+`soc-ai` **ไม่ยอมขึ้น**ถ้าไม่มี `AI_SERVICE_AUTH_TOKEN` (deploy ของ AI-Service fail พร้อม log)
+ตั้งใจให้เป็นแบบนั้น ดีกว่าขึ้นมาแล้วเปิดให้ทุกอย่างใน `soc-network` สั่ง agent ได้ ส่วน Backend ขึ้นได้
+แม้ยังไม่ได้ตั้ง Splunk, ThreatQ หรือ Confluence แต่ละ call ที่ต้องใช้จะ fail พร้อมข้อความที่บอกว่าขาดอะไร
 
 ### Playbook จาก Confluence
 
-worker อ่าน playbook ทั้ง space ผ่าน Confluence connector (`GET /pages`) ทุก
-`PLAYBOOK_SYNC_MINUTES` แล้วส่งให้ `soc-ai` (`PUT /playbooks/index`) ซึ่ง extract
-field, embed และเก็บ index ลง volume `playbook-index` — embed เฉพาะ field ที่ข้อความเปลี่ยน
-รอบที่ไม่มีอะไรเปลี่ยนจึงไม่ embed เลย ทุก alert จะ match กับ index ของ `soc-ai`
-(ชื่อตรง → สะกดใกล้ → ความหมาย) ไม่ได้ถาม connector แล้ว
-
-ดูว่า index อะไรไปแล้ว และ tier ความหมายทำงานไหม:
-
-```bash
-docker exec soc-ai python -c "import os,urllib.request as u; print(u.urlopen(u.Request('http://localhost:8100/playbooks', headers={'Authorization': 'Bearer '+os.environ['AI_SERVICE_AUTH_TOKEN']})).read().decode())"
-docker compose logs soc-core-worker | grep -i "playbook"   # "playbooks synced: ..." หรือ "playbook sync failed ..."
-```
-
-container ที่ขาด token จะ **ไม่ยอมขึ้นเลย** พร้อมบอกว่าขาดตัวไหน — ตั้งใจให้ fail
-แบบนั้น ดีกว่าขึ้นมาแล้วเปิดทางเข้า Splunk แบบไม่มีการยืนยันตัวตน
+worker อ่าน playbook ทั้ง space จาก Confluence REST API ทุก `PLAYBOOK_SYNC_MINUTES` แล้วส่งให้
+`soc-ai` ซึ่ง extract field, embed และเก็บ index ลง volume `playbook-index` (embed เฉพาะ field ที่ข้อความ
+เปลี่ยน) แต่ละ alert จะ match กับ index นั้น (ชื่อตรง → สะกดใกล้ → ความหมาย) ดูผลได้ที่ส่วน playbook
+ของ job แรก ถ้าขึ้นว่ายังไม่มีอะไร index แปลว่า `CONFLUENCE_*` ยังไม่ครบ หรือ sync รอบแรกยังไม่เสร็จ
 
 ---
 
 ## 7. ยิง alert แรก
 
+ออก API key ที่หน้า **API Keys** ของ dashboard (แสดงครั้งเดียว) หรือทาง API ([tokens.md ข้อ 4](tokens.md))
+แล้วส่ง alert จากเครื่องที่เรียก `10.40.35.18:8082` ได้:
+
 ```bash
-JWT=$(curl -s -X POST localhost:8082/auth/login -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"<รหัส>"}' \
-  | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
+API=http://10.40.35.18:8082
+KEY=<API key>
 
-KEY=$(curl -s -X POST localhost:8082/admin/api-keys -H "Authorization: Bearer $JWT" \
-  -H 'Content-Type: application/json' -d '{"name":"first-test"}' \
-  | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('api_key') or d['key'])")
-
-curl -s -X POST localhost:8082/v1/analyze -H "X-API-Key: $KEY" \
+curl -s -X POST $API/v1/analyze -H "X-API-Key: $KEY" \
   -H 'Content-Type: application/json' -d '{
     "alert_id":"FIRST-001","alert_name":"test",
     "raw_log":"srcip=10.1.100.11 dstip=45.83.122.9 action=\"blocked\""}'
@@ -266,21 +290,10 @@ playbook เก่าที่ยังส่งมาไม่ error เฉย�
 ได้ `job_id` แล้ว poll:
 
 ```bash
-curl -s localhost:8082/v1/results/<job_id> -H "X-API-Key: $KEY"
+curl -s $API/v1/results/<job_id> -H "X-API-Key: $KEY"
 ```
 
----
-
-## ที่อยู่ของแต่ละหน้า
-
-| | |
-| --- | --- |
-| Dashboard | `http://localhost:3001` |
-| Agent-Server UI | `http://localhost:7100` (คนละ stack, ขึ้นแยก — ดูข้อ 3) |
-| Agent-Server API (Swagger) | `http://localhost:8001/docs` |
-| Core API | `http://localhost:8082` |
-| Core API docs (Swagger) | `http://localhost:8082/docs` |
-| AI service | ไม่เปิด port — เรียกได้จากใน `soc-network` เท่านั้น และต้องมี `AI_SERVICE_AUTH_TOKEN` |
+หรือเปิดดูที่หน้า job ใน dashboard
 
 ---
 
@@ -288,41 +301,21 @@ curl -s localhost:8082/v1/results/<job_id> -H "X-API-Key: $KEY"
 
 ### Splunk
 
-Splunk อยู่นอก stack นี้ Backend คุยกับ **Splunk MCP Server app** ตรง โดยตั้งค่าใน `Backend/.env`
-ขั้นตอนทั้งหมด (ติดตั้งแอป, role, token, network, CA และวิธีเช็คว่าต่อสำเร็จ) อยู่ใน
-[splunk-mcp.md](splunk-mcp.md) ใช้ได้ทั้งกับ Splunk ของบริษัทและ Splunk ใน Offensive-Detection-Lab
+Splunk อยู่นอก stack นี้ Backend (`soc-core-worker`) คุยกับ **Splunk MCP Server app** บน search head
+ตรง ขั้นตอนทั้งหมด (ติดตั้งแอป, role, token, network, CA และการตรวจ) อยู่ใน [splunk-mcp.md](splunk-mcp.md)
 
 ```
-SPLUNK_MCP_URL=https://splunk.corp.example:8089/services/mcp
-SPLUNK_MCP_TOKEN=                 # encrypted token จากแอป Splunk MCP Server
-NODE_EXTRA_CA_CERTS=              # /certs/<ca>.pem ถ้า 8089 ใช้ cert ภายใน
+SPLUNK_MCP_URL=https://<search-head>:8089/services/mcp
+SPLUNK_MCP_TOKEN=<encrypted token จากแอป Splunk MCP Server>
+NODE_EXTRA_CA_CERTS=/app/certs/<ca>.pem    # ถ้า 8089 ใช้ cert ภายใน: commit ไฟล์ไว้ใน certs/
 ```
 
-catalogue (index/sourcetype/field) ดึงจาก Splunk ด้วย job `export_catalog` — [splunk-catalog.md](splunk-catalog.md)
-
-dev: ไม่มี Splunk ก็ได้ — ใช้ `soc-mcp-splunk` (`SPLUNK_MODE=mock` ใน `MCP-Server/.env`)
-
-ถ้ายังต่อ Splunk ของบริษัทไม่ได้ ใช้ image ทดสอบแทนได้ (เฉพาะเครื่อง dev):
-
-```bash
-PW="Splunk@Test$(openssl rand -hex 3)"; echo "$PW"
-docker run -d --name soc-splunk \
-  --network soc-network --network-alias splunk \
-  -e SPLUNK_GENERAL_TERMS=--accept-sgt-current-at-splunk-com \
-  -e SPLUNK_START_ARGS=--accept-license -e SPLUNK_PASSWORD="$PW" \
-  -p 8089:8089 -p 8001:8000 splunk/splunk:latest
-```
-
-ขั้นตอนออก token และใส่ข้อมูลทดสอบ: [tokens.md](tokens.md) หัวข้อ 6 — ถ้าจะใช้ stage 2 กับ Splunk
-ตัวนี้ ต้องติดตั้งแอปและทำ certificate ตาม [splunk-mcp.md](splunk-mcp.md) เหมือนกัน
-
-มีของจริงแล้ว — **ดึง catalog ก่อนใช้งาน** ไม่งั้น agent จะเดาชื่อ field ผิดแล้ว
-รายงานว่า "ไม่พบอะไร" อย่างมั่นใจ: [splunk-catalog.md](splunk-catalog.md)
+ต่อได้แล้ว **ดึง catalog ก่อนใช้งาน** ไม่งั้น Text-to-SPL จะเดาชื่อ field ผิดแล้วรายงานว่า
+"ไม่พบอะไร" อย่างมั่นใจ: [splunk-catalog.md](splunk-catalog.md)
 
 ### ThreatQ
 
-ต้องใช้ ThreatQ จริง (เป็น appliance ไม่มี image สาธารณะ และไม่มี stand-in แล้ว)
-ตั้งใน `MCP-Server/.env`:
+Backend เรียก ThreatQ REST API ตรง (อ่านอย่างเดียว) ตั้งเป็น CI variable ของ project Backend:
 
 ```
 THREATQ_BASE_URL=https://threatq.example.com
@@ -330,29 +323,38 @@ THREATQ_AUTH_MODE=oauth
 THREATQ_CLIENT_ID=
 THREATQ_EMAIL=
 THREATQ_PASSWORD=
-THREATQ_VERIFY_SSL=true
 ```
 
-ตั้งไม่ครบ connector จะไม่ยอมขึ้น เช็คว่าต่อสำเร็จไหมด้วย `GET /check-connection` —
-[MCP-Server/Threatq/README.md](../../MCP-Server/Threatq/README.md)
+รายละเอียดและแบบ bearer token: [tokens.md ข้อ 3](tokens.md) ถ้าเว้น `THREATQ_BASE_URL` ว่าง
+enrichment จะปิด และ summary จะบอกว่า ThreatQ NOT CHECKED แทนที่จะดูเหมือนว่าสะอาด
+
+### Confluence
+
+worker อ่าน space playbook ตรงจาก REST API: `CONFLUENCE_BASE_URL`, `CONFLUENCE_SPACE_KEY`,
+`CONFLUENCE_EMAIL`, `CONFLUENCE_API_TOKEN` — [tokens.md ข้อ 3.1](tokens.md)
+
+ถ้า ThreatQ หรือ Confluence ใช้ cert ที่ออกโดย CA ภายใน ใช้ `NODE_EXTRA_CA_CERTS` ตัวเดียวกับ Splunk
+(รวมหลาย CA ไว้ในไฟล์เดียวได้)
 
 ### FortiSOAR
 
-playbook ยิง `POST /v1/analyze` พร้อม header `X-API-Key` แล้ว poll
-`GET /v1/results/{job_id}` — [tokens.md](tokens.md) หัวข้อ 4
+playbook ยิง `POST http://10.40.35.18:8082/v1/analyze` พร้อม header `X-API-Key` แล้ว poll
+`GET /v1/results/{job_id}` — [tokens.md ข้อ 4](tokens.md)
 
 ---
 
-## ก่อนขึ้น production
+## ก่อนเปิดใช้จริง
 
 | เรื่อง | ทำอะไร |
 | --- | --- |
-| รหัส admin | เปลี่ยนที่หน้า Users ทันที |
+| รหัส admin ของ dashboard | เปลี่ยนที่หน้า Users |
+| `JWT_SECRET_KEY` | ต้องเป็น CI variable ค่าสุ่ม ไม่ใช่ค่าใน `.env.example` |
 | `SPLUNK_MCP_TOKEN` / `SPLUNK_TOKEN` | role **search-only** ไม่มี `delete_by_keyword`, `run_collect`, `run_mcollect`, `run_dump`, `run_sendalert`, `output_file`, `run_custom_command` — ดู [splunk-mcp.md](splunk-mcp.md) หัวข้อ 2 |
-| `SPLUNK_VERIFY_SSL` | ต้องเป็น `true` (lab ตั้ง false) |
-| ThreatQ account | read-only |
-| `Agent-Server` | **ไม่มี auth บน `/v1/agents/...` เลย** (ยังไม่มีระบบ API key — ดู readme ของมัน "Known limitations") ใครถึง port 8001 ได้ก็เรียก agent ได้ฟรี ต้องอยู่หลัง reverse proxy หรือ firewall เฉพาะ `soc-ai` |
-| Firewall | เปิดเฉพาะ 3002 และ 8082 ให้ IP ที่อนุญาต |
-| `env_file: .env` | ฉีด `.env` ทั้งไฟล์เข้าทุก container — `soc-mcp-splunk` ถือ `JWT_SECRET_KEY` อยู่ ทั้งที่แค่ query Splunk |
+| ข้อมูล alert ที่ส่งไป Splunk AI Assistant | ให้ผู้รับผิดชอบเรื่องข้อมูลอนุมัติก่อนเปิด stage 2 ([splunk-mcp.md](splunk-mcp.md) หัวข้อภาพรวม) |
+| ThreatQ / Confluence account | อ่านอย่างเดียว Confluence เห็นเฉพาะ space playbook |
+| Agent-Server | API เรียก agent **ไม่มี auth** (ดู readme ของ Agent-Server หัวข้อ Known limitations) และ publish port 8001, 8080 (llama.cpp) และ 5497 (Postgres ของมัน) ไว้ทุก interface ต้องให้ firewall ปิดจากภายนอก ส่วน 7100 เปิดเฉพาะ admin |
+| Firewall | เปิด 3002 และ 8082 ให้เฉพาะ IP ที่อนุญาต (SOAR, analyst) |
+| `env_file: .env` | `soc-core-api` และ `soc-core-worker` ได้ `.env` ทั้งไฟล์ API จึงถือ token ของ ThreatQ, Confluence และ Splunk ด้วยทั้งที่ worker เป็นคนใช้ |
 
-สองข้อล่างยังไม่ได้แก้ บันทึกไว้ใน [restructure.md](restructure.md)
+สองข้อหลังยังไม่ได้แก้ firewall ต้องให้ผู้ดูแลเครื่องทำ ส่วน `env_file` บันทึกไว้ใน
+[restructure.md](restructure.md)
