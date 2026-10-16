@@ -37,7 +37,7 @@ Splunk MCP Server app คือ **MCP server** ที่เก็บ tool ไว
 | MCP server | Splunk MCP Server app บน search head |
 | `SPLUNK_MCP_URL` | `https://<search-head>:8089/services/mcp` |
 | `SPLUNK_MCP_TOKEN` | encrypted token จากแอป (CI variable) |
-| `NODE_EXTRA_CA_CERTS` | `/app/certs/<ca>.pem` CA ของบริษัท (ดูหัวข้อ 3.2) |
+| `NODE_EXTRA_CA_CERTS` | `/app/certs/<ca>.pem` เฉพาะเมื่อ cert ของ 8089 ไม่ได้ออกโดย CA สาธารณะ (ดูหัวข้อ 3.2) |
 | Text-to-SPL | Splunk AI Assistant (cloud-connected, Agent Mode) |
 
 ### สิ่งที่ส่งให้ Text-to-SPL
@@ -167,9 +167,17 @@ catalogue ([splunk-catalog.md](splunk-catalog.md)) และช่วงเว�
 - **Splunk Cloud:** endpoint อยู่บน management port จึงต้องเพิ่ม egress IP ของเครื่อง production
   ใน IP allow list ชื่อ `search-api` (port 8089 ถูกปิดไว้เป็นค่าเริ่มต้น) [8]
 
-ผลข้อ 1 ของ `check_splunk` บอกได้ว่าเส้นทางนี้ใช้ได้ไหม (หัวข้อ 5)
+step 7 ของ `deploy_production` และข้อ 1 ของ `check_splunk` บอกได้ว่าเส้นทางนี้ใช้ได้ไหม (หัวข้อ 5)
 
 ### 3.2 Certificate
+
+**ต้องตั้งไหม** ขึ้นกับว่าใครเซ็น cert ของ port 8089:
+
+- cert default ของ Splunk (`SplunkServerDefaultCert`) หรือ cert ที่ CA ภายในบริษัทออก: **ต้องตั้ง** เพราะ Node ไม่เชื่อ CA เหล่านี้
+- cert จาก CA สาธารณะที่ Node รู้จักอยู่แล้ว: ไม่ต้องตั้ง
+
+port 8089 มักใช้แบบแรก ถ้าไม่แน่ใจ ตั้งแค่ `SPLUNK_MCP_URL` แล้ว deploy ดู step 7 ของ
+`deploy_production` (หัวข้อ 5): บรรทัด `trusted` บอกว่าต้องตั้งไหม และบรรทัด `i:` บอกว่าต้องขอ CA ตัวไหน
 
 Node ตรวจทั้ง CA และชื่อ: ชื่อใน `SPLUNK_MCP_URL` ต้องอยู่ใน SAN ของ cert ที่ 8089 ใช้
 และ CA ที่เซ็น cert นั้นต้องอยู่ใน `NODE_EXTRA_CA_CERTS` ซึ่ง*เพิ่ม*เข้าไปในรายการ CA ของ Node
@@ -207,7 +215,7 @@ Node ตรวจทั้ง CA และชื่อ: ชื่อใน `SPLU
 | --- | --- | --- |
 | `SPLUNK_MCP_URL` | `https://<search-head>:8089/services/mcp` | **ต้องตั้ง** ค่า default ใน `.env.example` ชี้ไปที่ตัวที่ไม่มีบน production ถ้าใส่แค่ base URL เช่น `https://<search-head>:8089` ระบบจะเติม `/services/mcp` ให้ |
 | `SPLUNK_MCP_TOKEN` | encrypted token จากหัวข้อ 2 | Protected + Masked ถ้าเว้นว่าง Splunk จะตอบ 401 |
-| `NODE_EXTRA_CA_CERTS` | `/app/certs/<ca>.pem` | ดูหัวข้อ 3.2 |
+| `NODE_EXTRA_CA_CERTS` | `/app/certs/<ca>.pem` | เฉพาะเมื่อ cert ของ 8089 ไม่ได้ออกโดย CA สาธารณะ ดูหัวข้อ 3.2 ว่าต้องตั้งไหม |
 | `SPLUNK_SEARCH_TIMEOUT` | `120` (default) | วินาทีต่อ MCP call หนึ่งครั้ง Text-to-SPL ใช้เวลาหลายสิบวินาที และ Splunk หยุด search ที่ 1 นาทีอยู่แล้ว [3] |
 | `SPLUNK_MAX_COUNT` | `200` (default) | จำนวนแถวที่เก็บต่อ requirement (Splunk คืนได้ไม่เกิน 1000 event) [3] |
 | `SPLUNK_LOOKUP_MODE` | `manual` (default) | `manual` คือรอ analyst กดปุ่ม, `auto` คือรันทุก alert, `off` คือปิด stage 2 (ใช้ระหว่างที่ Splunk ยังไม่พร้อม) |
@@ -222,6 +230,35 @@ CI variable `SPLUNK_URL` และ `SPLUNK_TOKEN` แยก โดย `SPLUNK_TO
 ---
 
 ## 5. ตรวจว่าใช้ได้: job `check_splunk`
+
+### ก่อนมี token และ CA: step 7 ของ `deploy_production`
+
+ทุก deploy จบด้วย step **7. Splunk connection** ซึ่งรันใน `soc-core-worker` ตัวที่เพิ่ง deploy ใช้แค่
+`SPLUNK_MCP_URL` **ไม่ส่ง token** จึงต่อแบบไม่ตรวจ cert ได้อย่างปลอดภัย และแยกปัญหาสองเรื่องออกจากกัน:
+
+```
+URL          https://<search-head>:8089/services/mcp
+network      reached <search-head>:8089 (10.x.x.x), answered HTTP 401
+             the endpoint is there and asks for the token: the URL is right
+certificate  as <search-head>:8089 presents it (s: whose, i: issued by):
+             0 s:CN = <search-head>
+               i:CN = <CA ของบริษัท>
+trusted      NO: (60) SSL certificate problem: unable to get local issuer certificate
+             ask the Splunk team for the CA certificate that issued it (the last i: above), ...
+```
+
+| บรรทัด | บอกอะไร |
+| --- | --- |
+| `network NOT reached` | ต่อไม่ถึง: ชื่อ resolve ไม่ได้ (DNS), ไม่มีอะไรตอบ (firewall หรือ port ผิด) หรือถูกปฏิเสธ |
+| `network reached … HTTP 401` | network ผ่าน และ URL ถูก (endpoint ขอ token) |
+| `HTTP 404` / `30x` (redirect ไปหน้า login) | path ผิด หรือเป็นหน้าเว็บของ Splunk ไม่ใช่ API ให้ใช้ `https://<search-head>:8089/services/mcp` |
+| `i:` | CA ที่ออก cert ตัวสุดท้ายในรายการคือตัวที่ต้องขอจากทีม Splunk |
+| `trusted yes` | worker เชื่อ cert แล้ว ถ้าขึ้นว่า `NODE_EXTRA_CA_CERTS is not needed` แปลว่าไม่ต้องตั้ง |
+| `trusted NO` | ยังไม่เชื่อ: ขาด CA, cert ไม่มีชื่อนี้ หรือ cert หมดอายุ (บรรทัดถัดไปบอกว่าแบบไหน) |
+
+step นี้ไม่ทำให้ deploy fail ไม่ว่าผลจะเป็นอะไร
+
+### หลังมี token: job `check_splunk`
 
 ไม่มีใครรัน docker บนเครื่อง production ได้ การตรวจจึงอยู่ใน pipeline ของ Backend สอง job ที่รันใน
 `soc-core-worker` ตัวที่ deploy อยู่ (config, network และ CA เดียวกับ lookup จริง) อ่านอย่างเดียว
@@ -300,6 +337,7 @@ connected      yes — both tools found; Text-to-SPL takes the request in "<arg>
 | [`src/modules/enrichment/spl-guard.ts`](../src/modules/enrichment/spl-guard.ts) | ตรวจ SPL ระหว่างสอง call และใส่ช่วงเวลาของ alert ถ้า SPL ยังไม่มี |
 | [`src/modules/queue/lookup.processor.ts`](../src/modules/queue/lookup.processor.ts) | stage 2: หนึ่ง MCP session ต่อ lookup และหนึ่งคำตอบต่อ requirement |
 | [`src/scripts/splunk-mcp-check.ts`](../src/scripts/splunk-mcp-check.ts) | สคริปต์ที่ job ในหัวข้อ 5 รัน |
+| [`scripts/splunk-probe.sh`](../scripts/splunk-probe.sh) | step 7 ของ `deploy_production`: network แบบไม่ตรวจ cert แล้วตามด้วย cert |
 | [`.gitlab-ci.yml`](../.gitlab-ci.yml) (`check_splunk`, `check_splunk_requirement`) | job ตรวจในหัวข้อ 5 |
 | [`src/config/configuration.ts`](../src/config/configuration.ts) (`splunk`) | ค่าในหัวข้อ 4 |
 | [`catalog/`](../catalog) | catalogue และ lookup plans ดู [splunk-catalog.md](splunk-catalog.md) |

@@ -81,7 +81,7 @@ deploy ของ Backend สร้าง `.env` จาก `.env.example` โด�
 | `PROD_POSTGRES_USER`, `PROD_POSTGRES_DB` | ไม่ต้อง (default `socai`) | user และชื่อ DB ของ `soc-db` |
 | `JWT_SECRET_KEY` | **ต้อง** | กุญแจเซ็น session ถ้าไม่ตั้ง จะได้ค่าตัวอย่างใน `.env.example` ซึ่งใครอ่าน repo ก็ปลอม session ได้ และ deploy ไม่เตือน |
 | `AI_SERVICE_AUTH_TOKEN` | **ต้อง** | ตั้งเป็น group variable ตัวเดียว ใช้ร่วมกับ AI-Service |
-| `SPLUNK_MCP_URL`, `SPLUNK_MCP_TOKEN`, `NODE_EXTRA_CA_CERTS` | สำหรับ stage 2 | [splunk-mcp.md](splunk-mcp.md) ค่า default ของ `SPLUNK_MCP_URL` ชี้ไปที่ตัวที่ไม่มีบน production ถ้ายังไม่พร้อม ให้ตั้ง `SPLUNK_LOOKUP_MODE=off` |
+| `SPLUNK_MCP_URL`, `SPLUNK_MCP_TOKEN` (+ `NODE_EXTRA_CA_CERTS` เมื่อ cert ของ 8089 ไม่ได้ออกโดย CA สาธารณะ) | สำหรับ stage 2 | [splunk-mcp.md](splunk-mcp.md) ค่า default ของ `SPLUNK_MCP_URL` ชี้ไปที่ตัวที่ไม่มีบน production ถ้ายังไม่พร้อม ให้ตั้ง `SPLUNK_LOOKUP_MODE=off` |
 | `THREATQ_*` | สำหรับ ThreatQ | [tokens.md ข้อ 3](tokens.md) ถ้าไม่ตั้ง summary จะบอกว่า ThreatQ NOT CHECKED |
 | `CONFLUENCE_*` | สำหรับ playbook | [tokens.md ข้อ 3.1](tokens.md) ถ้าไม่ตั้ง ทุก alert จะไม่มี playbook |
 | `SPLUNK_URL`, `SPLUNK_TOKEN`, `SSL_CERT_FILE` | สำหรับ `export_catalog` | [splunk-catalog.md](splunk-catalog.md) |
@@ -109,7 +109,7 @@ model ของ Agent-Server ไม่ใช่ CI variable เลือกท�
 | `inspect_ports` | inspect | อัตโนมัติบน `main` | port ที่แต่ละ container ใช้ ใครถือ port ไหน และ firewall ของเครื่อง |
 | `deploy_production` | deploy | อัตโนมัติบน `main` | step 0–6 ด้านล่าง |
 | `check_splunk` | verify | อัตโนมัติหลัง deploy | ตรวจการต่อ Splunk ([splunk-mcp.md ข้อ 5](splunk-mcp.md#5-ตรวจว่าใช้ได้-job-check_splunk)) |
-| `export_catalog` | deploy | กด ▶ เอง | ดึง catalogue จาก Splunk ([splunk-catalog.md](splunk-catalog.md)) |
+| `export_catalog` | verify | กด ▶ เอง | ดึง catalogue จาก Splunk ([splunk-catalog.md](splunk-catalog.md)) |
 
 job ตรวจทั้งหมด (`inspect_*`, `check_splunk`, `export_catalog`) ตั้ง `allow_failure` ไว้ ถ้า fail
 จะขึ้น ⚠ พร้อมเหตุผลใน log แต่ pipeline และ deploy ยังผ่าน บน protected branch อื่นที่ไม่ใช่ `main`
@@ -126,6 +126,7 @@ job เหล่านี้เป็นปุ่ม ▶
 | 4. Start | ขึ้น `soc-core-api` และ `soc-core-worker` | พิมพ์ log 50 บรรทัดท้าย |
 | 5. Health | รอ `/health` จากใน container | |
 | 6. Address | ถาม `/health` ผ่าน IP และ port ของเครื่อง แล้วตั้งลิงก์ environment ของ GitLab | port publish แล้วแต่เรียกจากที่อยู่นั้นไม่ได้ |
+| 7. Splunk connection | จาก worker ตัวใหม่: ต่อ `SPLUNK_MCP_URL` แบบไม่ตรวจ cert (ไม่ส่ง token) แล้วแสดง cert ว่าใครออกและ worker เชื่อไหม ([splunk-mcp.md ข้อ 5](splunk-mcp.md#5-ตรวจว่าใช้ได้-job-check_splunk)) | ไม่ fail ไม่ว่าผลจะเป็นอะไร แค่รายงาน |
 
 ### DB ตัวไหน
 

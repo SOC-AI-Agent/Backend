@@ -370,6 +370,42 @@ deploy_production:
       echo "  answers    $answer"
       echo "DYNAMIC_ENVIRONMENT_URL=$url/docs" > deploy.env
 
+    - echo "========== 7. Splunk connection =========="
+    # From the worker just started, with its SPLUNK_MCP_URL: first the network
+    # with the certificate NOT checked (does the name resolve, does the port
+    # answer, what does the endpoint say), then the certificate itself (who
+    # issued it, which names it covers, whether the worker trusts it with
+    # NODE_EXTRA_CA_CERTS). Unchecked is safe here because no token is sent.
+    # So a network that works is told apart from a CA that is missing, and the
+    # CA to ask for is named. scripts/splunk-probe.sh. A report only: Splunk
+    # not answering never fails the deploy — check_splunk, after it, goes on to
+    # the token and the tools.
+    #
+    # When the worker cannot get through, the same probe again from this
+    # server's own network (same image, same .env, outside Docker), to say who
+    # has to open what: blocked there too is the network between this server
+    # and Splunk; open there is this server's own forwarding for containers.
+    - |
+      if ! out=$(docker exec -i soc-core-worker sh -s < scripts/splunk-probe.sh 2>&1); then
+        out="(the probe could not run; the deploy itself is done)"
+      fi
+      echo "$out"
+      case "$out" in *"NOT reached"*)
+        echo "--- the same from this server itself, outside Docker:"
+        host_out=$(docker run --rm -i --network host --env-file .env --entrypoint sh \
+          "$(docker inspect -f '{{.Config.Image}}' soc-core-worker)" -s < scripts/splunk-probe.sh 2>&1) || host_out=""
+        printf '%s\n' "$host_out" | awk '/^network/ { p = 1 } /^(certificate|trusted)/ { p = 0 } p'
+        case "$host_out" in
+          *"NOT reached"*)
+            echo "=> blocked outside this server too: the network team has to allow ${host:-this server}"
+            echo "   to the address and port above (or to port 8089, if that one is named instead)" ;;
+          *"network      reached"*)
+            echo "=> this server gets through, its containers do not: Docker's forwarding on this"
+            echo "   server (firewalld) — for the server's admin, not the network team" ;;
+          *) echo "(the check from the server itself could not run)" ;;
+        esac ;;
+      esac
+
 # Prints the production database's tables, columns, enums, constraints,
 # indexes, Prisma migration history, and its drift from the deployed
 # prisma/schema.prisma — the inventory prisma/migrations/0_init was written
@@ -377,8 +413,8 @@ deploy_production:
 # Read-only (see scripts/inspect-db-schema.sh); structure only, no rows and no
 # credentials reach the log.
 #
-# On main it runs by itself, in its own stage before deploy_production and
-# export_catalog, so the database is shown as it was before this deploy — and
+# On main it runs by itself, in its own stage before deploy_production, so
+# the database is shown as it was before this deploy — and
 # is shown even when the deploy then fails. The drift section compares against
 # the backend deployed last time, if one is running on this database. allow_failure: a host with
 # no database yet fails the inspection, and that must not stop the deploy that
@@ -480,6 +516,26 @@ inspect_ports:
     - job: deploy_production
       optional: true
   script:
+    # What is deployed, before checking what it can reach: when the worker
+    # was made, and whether the Splunk settings reached it. A variable this
+    # job sees but the worker does not was set after the last deploy (or the
+    # deploy did not finish); one this job does not see is not set, or is
+    # hidden from main (Protected on an unprotected branch, or an environment
+    # scope other than All/production). The token's value is never printed.
+    - |
+      echo "== 0. The deployed worker =="
+      docker inspect -f 'container created {{.Created}}' soc-core-worker
+      docker image inspect -f 'image built       {{.Created}}' "$(docker inspect -f '{{.Image}}' soc-core-worker)"
+      echo "SPLUNK_MCP_URL    this job: ${SPLUNK_MCP_URL:-NOT SET}"
+      echo "                  worker:   $(docker exec soc-core-worker printenv SPLUNK_MCP_URL || echo 'NOT SET')"
+      if [ -n "${SPLUNK_MCP_TOKEN:-}" ]; then t=set; else t="NOT SET"; fi
+      echo "SPLUNK_MCP_TOKEN  this job: $t"
+      echo "                  worker:   $(docker exec soc-core-worker sh -c '[ -n "${SPLUNK_MCP_TOKEN:-}" ] && echo set || echo "NOT SET"')"
+      if ! docker exec soc-core-worker test -f dist/scripts/splunk-mcp-check.js; then
+        echo "This worker was built from code without stage 2 over MCP (no dist/scripts/splunk-mcp-check.js):"
+        echo "the current code has not been deployed. See deploy_production's log in this pipeline."
+        exit 1
+      fi
     - |
       echo "== 1. Network and certificate (no token sent: HTTP 401 means both are fine) =="
       docker exec soc-core-worker sh -c '
@@ -548,7 +604,8 @@ check_splunk_requirement:
 # verified; for an internal CA, put it in certs/ and set the CI variable
 # SSL_CERT_FILE=certs/<file>.pem.
 export_catalog:
-  stage: deploy
+  # Beside check_splunk and check_splunk_requirement: the Splunk jobs together.
+  stage: verify
   image: python:3.12
   # Needs to reach Splunk's management port, which a shared runner cannot.
   tags:
@@ -557,8 +614,9 @@ export_catalog:
   environment:
     name: production
     action: access
-  # After the inspection, like deploy_production.
-  needs: [inspect_db_schema]
+  # Talks to Splunk's REST API, not to anything deployed here: nothing to wait
+  # for, so the button is there as soon as the pipeline starts.
+  needs: []
   rules:
     - if: '$CI_COMMIT_REF_PROTECTED == "true"'
       when: manual

@@ -52,7 +52,8 @@ GitLab → CI/CD → Pipelines → pipeline ของ branch ที่ protected
 
 - ไม่รันเองอัตโนมัติ: ยิง search หนึ่งครั้งต่อ sourcetype บน search head production
   และ catalogue เปลี่ยนเมื่อ estate เปลี่ยน ไม่ใช่ทุก commit
-- ไม่ขวาง pipeline (`allow_failure: true`) รอแค่ `inspect_db_schema`
+- อยู่ใน stage `verify` คู่กับ job ตรวจ Splunk อีกสองตัว ไม่ขวาง pipeline (`allow_failure: true`)
+  และไม่ต้องรอ job อื่น (`needs: []`) กดได้ทันทีที่ pipeline เริ่ม
 - ใช้ environment `production` (`action: access`) คนที่ deploy production ได้เท่านั้นที่กดได้
 - export ลง staging ก่อน ตรวจด้วย `verify_catalog_export.py` แล้วค่อยย้ายเข้าที่ —
   export ที่ตายกลางทาง (เช่นได้ 3 จาก 200 sourcetype) จะ fail ไม่ใช่ได้ catalogue ครึ่งใบ
