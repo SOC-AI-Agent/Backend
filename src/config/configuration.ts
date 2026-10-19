@@ -20,6 +20,41 @@ const toInt = (v: string | undefined, fallback: number): number => {
   return Number.isNaN(n) ? fallback : n;
 };
 
+/**
+ * CONFLUENCE_BASE_URL as the site, and the space it names if it is the address
+ * of a space or a page — pasted from the browser's address bar:
+ *   https://acme.atlassian.net/wiki/spaces/SOC/overview         -> .../wiki, SOC
+ *   https://acme.atlassian.net/wiki/spaces/SOC/pages/123/Title  -> .../wiki, SOC
+ *   https://confluence.corp/display/SOC/Some+Page                -> site root, SOC
+ *   https://confluence.corp/spaces/viewspace.action?key=SOC      -> site root, SOC
+ *   https://acme.atlassian.net/wiki                              -> as it is, no space
+ * The space named in the URL wins over CONFLUENCE_SPACE_KEY, which is for a
+ * plain site URL. The whole space is read either way, not one page of it.
+ */
+export function confluenceSite(raw: string | undefined, spaceKey: string | undefined): { baseUrl: string; spaceKey: string } {
+  const given = (spaceKey ?? '').trim();
+  const text = (raw ?? '').trim();
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    return { baseUrl: text.replace(/\/+$/, ''), spaceKey: given };
+  }
+  const path = url.pathname.replace(/\/+$/, '');
+  const m = path.match(/^(.*?)\/(?:spaces|display)\/([^/]+)/);
+  if (m && m[2] !== 'viewspace.action') {
+    return { baseUrl: url.origin + m[1], spaceKey: decodeURIComponent(m[2]) };
+  }
+  // Server/DC's .action pages: the site is what comes before them, the space
+  // their key= if they carry one (viewpage.action?pageId= does not).
+  const action = path.match(/^(.*?)\/(?:spaces|pages)\/[^/]+\.action$/);
+  if (action) {
+    const key = url.searchParams.get('key') ?? url.searchParams.get('spaceKey');
+    return { baseUrl: url.origin + action[1], spaceKey: key ?? given };
+  }
+  return { baseUrl: url.origin + path, spaceKey: given };
+}
+
 export default () => ({
   app: {
     appName: process.env.APP_NAME ?? 'SOC AI Suggestion',
@@ -90,10 +125,9 @@ export default () => ({
      */
     confluence: {
       /** https://your-org.atlassian.net/wiki (Cloud) or https://confluence.corp (Server/DC). */
-      baseUrl: (process.env.CONFLUENCE_BASE_URL ?? '').replace(/\/+$/, ''),
+      ...confluenceSite(process.env.CONFLUENCE_BASE_URL, process.env.CONFLUENCE_SPACE_KEY),
       /** Cloud is <base>/wiki/rest/api, so with /wiki in the base this stays /rest/api. */
       apiPath: process.env.CONFLUENCE_API_PATH ?? '/rest/api',
-      spaceKey: process.env.CONFLUENCE_SPACE_KEY ?? '',
       /** Cloud: email + API token as basic auth. Blank email: the token is a Server/DC PAT, sent as a bearer. */
       email: process.env.CONFLUENCE_EMAIL ?? '',
       apiToken: process.env.CONFLUENCE_API_TOKEN ?? '',

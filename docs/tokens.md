@@ -163,11 +163,18 @@ Backend (worker) อ่านทุกหน้าใน space playbook ตร�
 (`BUILD_PROXY`) deploy ใส่ให้เอง ไม่ต้องตั้ง `CONFLUENCE_PROXY`
 
 ```bash
-CONFLUENCE_BASE_URL=https://your-org.atlassian.net/wiki   # ต้องมี /wiki
-CONFLUENCE_SPACE_KEY=SOC
+CONFLUENCE_BASE_URL=https://your-org.atlassian.net/wiki/spaces/SOC/overview   # URL ของ space จาก browser ได้เลย
+# หรือแยกเป็นสองตัว:
+#   CONFLUENCE_BASE_URL=https://your-org.atlassian.net/wiki
+#   CONFLUENCE_SPACE_KEY=SOC
 CONFLUENCE_EMAIL=<อีเมล service account>                  # basic auth คู่กับ API token
 CONFLUENCE_API_TOKEN=<API token จาก id.atlassian.com → Security → API tokens>
 ```
+
+`CONFLUENCE_BASE_URL` ใส่ URL ของ space หรือของหน้าไหนก็ได้ใน space นั้นที่ copy จาก browser ระบบแยกที่อยู่ของ Confluence
+กับ space key ให้เอง แล้วอ่าน**ทุกหน้าใน space** (ไม่ใช่แค่หน้าที่ชี้) space key ใน URL มาก่อน `CONFLUENCE_SPACE_KEY`
+ถ้าใส่แค่ที่อยู่ของ Confluence ต้องตั้ง `CONFLUENCE_SPACE_KEY` คือส่วนหลัง `/spaces/` ใน URL ของ space
+(หรือ Space settings → Space details → Key)
 
 proxy ใช้เฉพาะการเรียก Confluence ไม่มีผลกับ `soc-ai`, Splunk หรือ ThreatQ ถ้าต้องการ proxy ตัวอื่น ตั้ง CI variable
 `CONFLUENCE_PROXY` เอง ตั้งเป็นค่าว่างคือไม่ใช้ proxy
