@@ -13,6 +13,10 @@
  * With --network (deploy_production's last step) it only asks whether
  * Confluence answers, sending no credentials at all: the name, the proxy, the
  * certificate and the path, before anything about the account.
+ *
+ * With --samples N, after the read: N of the pages (playbooks first), each
+ * with whether soc-ai will take it as a playbook and the start of its text as
+ * Confluence renders it for export. Printed only; nothing is written or kept.
  */
 import { existsSync } from 'fs';
 
@@ -20,7 +24,57 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 
 import configuration from '../config/configuration';
-import { PlaybookSyncService } from '../modules/enrichment/playbook-sync.service';
+import { PlaybookPage, PlaybookSyncService } from '../modules/enrichment/playbook-sync.service';
+
+/** A cell's or a page's text: tags out, entities decoded, blank lines dropped. */
+function text(html: string): string {
+  return html
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<(br|\/p|\/div|\/tr|\/li|\/h[1-6])[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
+    .split('\n').map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n');
+}
+
+/**
+ * The name soc-ai would route this page by: a two-column table row labelled as
+ * soc-ai's extractor labels it (AI-Service playbooks/extract.py FIELD_LABELS).
+ * None: soc-ai skips the page.
+ */
+function playbookName(storage: string): string | null {
+  for (const row of storage.match(/<tr[\s\S]*?<\/tr>/gi) ?? []) {
+    const cells = [...row.matchAll(/<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/gi)].map((m) => text(m[1]).replace(/\n/g, ' '));
+    if (cells.length === 2 && /^(alert name|alert|use case|use case \/ alert name|use case name)$/i.test(cells[0])) {
+      return cells[1] || null;
+    }
+  }
+  return null;
+}
+
+/** Up to n pages, playbooks first, printed. */
+async function samples(sync: PlaybookSyncService, pages: PlaybookPage[], n: number, timeoutMs: number): Promise<void> {
+  const named = pages.map((p) => ({ page: p, name: playbookName(p.body) }));
+  const picks = [...named.filter((x) => x.name), ...named.filter((x) => !x.name && x.page.body.trim())].slice(0, n);
+  const playbooks = named.filter((x) => x.name).length;
+  console.log(`playbooks      ${playbooks} of ${pages.length} page(s) have a Use Case / Alert Name row soc-ai routes by`);
+  let i = 0;
+  for (const { page, name } of picks) {
+    i += 1;
+    console.log(`\nsample ${i}       ${page.title}  (${page.url})`);
+    console.log(`               ${name ? `playbook: yes — routed by "${name}"` : 'playbook: no — no Use Case / Alert Name row, soc-ai skips it'}`);
+    let html = '';
+    try {
+      html = await sync.pageExportHtml(page.id, timeoutMs);
+    } catch (err: any) {
+      console.log(`               (no export view: ${err?.message ?? err} — the storage format instead)`);
+    }
+    const lines = text((html || page.body).replace(/<img\b[^>]*>/gi, '[image]')).split('\n');
+    for (const line of lines.slice(0, 20)) console.log(`               | ${line.slice(0, 160)}`);
+    if (lines.length > 20) console.log(`               | … ${lines.length - 20} more line(s)`);
+  }
+  if (!picks.length) console.log('samples        none: no page has a body');
+}
 
 /** What a failed connection means, by Node's error code. */
 const HINTS: Record<string, string> = {
@@ -55,6 +109,10 @@ async function main(): Promise<void> {
   console.log(`base URL       ${c.baseUrl || 'NOT SET'}`);
   console.log(`API            ${sync.apiVersion()}${c.api === 'auto' ? ' (auto)' : ''}`);
   console.log(`space          ${c.spaceKey || 'NOT SET'}`);
+  const scope = c.rootType && sync.apiVersion() === 'v2'
+    ? `${c.rootType} ${c.rootId} and every page under it`
+    : `the whole space${c.rootType ? ` (a ${c.rootType} in the URL narrows it only on Cloud, API v2)` : ''}`;
+  console.log(`reads          ${scope}`);
   console.log(`credentials    ${c.email ? `email ${c.email} + API token (basic)` : 'personal access token (bearer)'}; ` +
     `token ${c.apiToken ? `set (${c.apiToken.length} chars)` : 'NOT SET'}`);
   console.log(`proxy          ${proxy}`);
@@ -94,12 +152,18 @@ async function main(): Promise<void> {
   }
 
   const started = Date.now();
-  const pages = await sync.readSpace(Math.min(config.get('playbook.syncTimeoutMs'), 60_000));
+  const timeoutMs = Math.min(config.get('playbook.syncTimeoutMs'), 60_000);
+  const pages = await sync.readSpace(timeoutMs);
   const secs = ((Date.now() - started) / 1000).toFixed(1);
   console.log(`read           ${pages.length} page(s) in ${secs} s`);
   for (const p of pages.slice(0, 5)) console.log(`               ${p.title}  (${p.url})`);
   if (pages.length > 5) console.log(`               … and ${pages.length - 5} more`);
   if (!pages.length) console.log('               the space is empty, or the account sees none of it');
+
+  const at = process.argv.indexOf('--samples');
+  if (at !== -1 && pages.length) {
+    await samples(sync, pages, Math.max(1, Number(process.argv[at + 1]) || 3), timeoutMs);
+  }
 }
 
 main().catch((err) => {

@@ -622,10 +622,14 @@ check_splunk_requirement:
 # soc-core-worker, with its .env, network, CONFLUENCE_PROXY and CA:
 #   0. the worker, and whether the Confluence settings reached it (the token as
 #      set / NOT SET only, a proxy without its password)
-#   1. scripts/confluence-check: the whole space read the way the hourly sync
-#      reads it — same API (v2 for Cloud, v1 for Server/DC), credentials, proxy
-#      and paging — and how many pages that came to; a failure says what it
-#      means (DNS, firewall, proxy, certificate, 401/403/404)
+#   1. scripts/confluence-check: what CONFLUENCE_BASE_URL points at (the space,
+#      or a page or folder and everything under it) read the way the hourly
+#      sync reads it — same API, credentials, proxy and paging — and how many
+#      pages that came to; a failure says what it means (DNS, firewall, proxy,
+#      certificate, 401/403/404). Then three of the pages, playbooks first:
+#      whether soc-ai takes each as a playbook (a Use Case / Alert Name row) and
+#      the start of its text as Confluence renders it for export. In the log
+#      only — no file of it is written or kept.
 #   2. the worker's own last sync results from its log: whether soc-ai indexed
 #      them, and how many playbooks that made
 # Runs by itself on main right after deploy_production, a button elsewhere.
@@ -668,8 +672,8 @@ check_confluence:
         echo "the current code has not been deployed. See deploy_production's log in this pipeline."
         exit 1
       fi
-    - echo "== 1. Reading the space, as the sync does =="
-    - docker exec soc-core-worker node dist/scripts/confluence-check.js
+    - echo "== 1. Reading Confluence, as the sync does, with three sample pages =="
+    - docker exec soc-core-worker node dist/scripts/confluence-check.js --samples 3
     - |
       echo "== 2. The worker's last syncs (its log) =="
       docker logs soc-core-worker 2>&1 \

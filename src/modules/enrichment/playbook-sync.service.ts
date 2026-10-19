@@ -172,6 +172,20 @@ export class PlaybookSyncService implements OnApplicationBootstrap, OnModuleDest
     };
   }
 
+  /**
+   * One page as Confluence renders it for export (body-format export_view):
+   * macros expanded, the Page Properties table a table — what a PDF export
+   * would show. For scripts/confluence-check --samples; the sync itself sends
+   * soc-ai the storage format.
+   */
+  async pageExportHtml(id: string, timeoutMs: number): Promise<string> {
+    const { baseUrl, apiPath } = this.config.get('playbook.confluence');
+    const data = this.apiVersion() === 'v2'
+      ? await this.get(`${baseUrl}/api/v2/pages/${id}`, timeoutMs, { 'body-format': 'export_view' })
+      : await this.get(`${baseUrl}${apiPath}/content/${id}`, timeoutMs, { expand: 'body.export_view' });
+    return data?.body?.export_view?.value ?? '';
+  }
+
   /** v1 or v2, from CONFLUENCE_API (auto: v2 for Atlassian's cloud). */
   apiVersion(): 'v1' | 'v2' {
     const { baseUrl, api } = this.config.get('playbook.confluence');
@@ -212,7 +226,8 @@ export class PlaybookSyncService implements OnApplicationBootstrap, OnModuleDest
    * with the bodies in storage format, following the cursor in _links.next.
    */
   private async readSpaceV2(timeoutMs: number): Promise<PlaybookPage[]> {
-    const { baseUrl, spaceKey, pageLimit } = this.config.get('playbook.confluence');
+    const { baseUrl, spaceKey, pageLimit, rootType, rootId } = this.config.get('playbook.confluence');
+    if (rootType && rootId) return this.readTreeV2(rootType, rootId, timeoutMs);
     const spaces = this.results(await this.get(`${baseUrl}/api/v2/spaces`, timeoutMs, { keys: spaceKey }));
     const space = spaces.find((s) => s?.key === spaceKey) ?? spaces[0];
     if (!space?.id) {
@@ -232,6 +247,53 @@ export class PlaybookSyncService implements OnApplicationBootstrap, OnModuleDest
       const next: string | undefined = data._links?.next;
       url = next ? new URL(next, baseUrl).toString() : null;
       params = undefined;
+    }
+    return this.toPages(raw, base);
+  }
+
+  /**
+   * The page or folder CONFLUENCE_BASE_URL points at, and every page under it
+   * at any depth — the use cases under their category page, say, without the
+   * rest of the space. The pages under it from /descendants (ten levels a call;
+   * a page or folder at the tenth level is asked again for what is under it),
+   * then their bodies from /pages?id=, 250 at a time. A page itself is read
+   * too: soc-ai skips one that is not a playbook (no alert name).
+   */
+  private async readTreeV2(rootType: 'page' | 'folder', rootId: string, timeoutMs: number): Promise<PlaybookPage[]> {
+    const { baseUrl } = this.config.get('playbook.confluence');
+    const ids = new Set<string>(rootType === 'page' ? [rootId] : []);
+    const queue: Array<{ type: string; id: string }> = [{ type: rootType, id: rootId }];
+    while (queue.length) {
+      const node = queue.shift()!;
+      const kind = node.type === 'folder' ? 'folders' : 'pages';
+      let url: string | null = `${baseUrl}/api/v2/${kind}/${node.id}/descendants`;
+      let params: Record<string, unknown> | undefined = { depth: 10, limit: 250 };
+      while (url) {
+        const data = await this.get(url, timeoutMs, params);
+        for (const d of this.results(data)) {
+          if (d?.type === 'page') ids.add(String(d.id));
+          if (d?.depth >= 10 && (d.type === 'page' || d.type === 'folder')) queue.push({ type: d.type, id: String(d.id) });
+        }
+        url = data._links?.next ? new URL(data._links.next, baseUrl).toString() : null;
+        params = undefined;
+      }
+    }
+
+    const all = [...ids];
+    const raw: any[] = [];
+    let base = baseUrl;
+    for (let i = 0; i < all.length; i += 250) {
+      let url: string | null = `${baseUrl}/api/v2/pages`;
+      let params: Record<string, unknown> | undefined = {
+        id: all.slice(i, i + 250).join(','), 'body-format': 'storage', status: 'current', limit: 250,
+      };
+      while (url) {
+        const data = await this.get(url, timeoutMs, params);
+        raw.push(...this.results(data));
+        base = data._links?.base ?? base;
+        url = data._links?.next ? new URL(data._links.next, baseUrl).toString() : null;
+        params = undefined;
+      }
     }
     return this.toPages(raw, base);
   }
@@ -260,7 +322,8 @@ export class PlaybookSyncService implements OnApplicationBootstrap, OnModuleDest
     if (resp.status === 403) throw new Error(`Confluence refused the read (403) — the account cannot see space ${spaceKey}${via}`);
     if (resp.status === 407) throw new Error('the proxy wants credentials of its own (407): CONFLUENCE_PROXY=http://user:pass@host:port');
     if (resp.status === 404) {
-      throw new Error(`not found (404) — space ${spaceKey}, or CONFLUENCE_BASE_URL is missing a path such as /wiki`);
+      throw new Error(`not found (404) at ${new URL(url).pathname} — no such space ${spaceKey} or page, ` +
+        'one the account cannot see, or CONFLUENCE_BASE_URL is missing a path such as /wiki');
     }
     if (resp.status >= 400) throw new Error(`Confluence returned ${resp.status}`);
     return resp.data;

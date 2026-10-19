@@ -21,38 +21,55 @@ const toInt = (v: string | undefined, fallback: number): number => {
 };
 
 /**
- * CONFLUENCE_BASE_URL as the site, and the space it names if it is the address
- * of a space or a page — pasted from the browser's address bar:
- *   https://acme.atlassian.net/wiki/spaces/SOC/overview         -> .../wiki, SOC
- *   https://acme.atlassian.net/wiki/spaces/SOC/pages/123/Title  -> .../wiki, SOC
- *   https://confluence.corp/display/SOC/Some+Page                -> site root, SOC
- *   https://confluence.corp/spaces/viewspace.action?key=SOC      -> site root, SOC
- *   https://acme.atlassian.net/wiki                              -> as it is, no space
+ * CONFLUENCE_BASE_URL as the site, the space it names, and — for a Cloud page
+ * or folder — what to read: pasted from the browser's address bar:
+ *   https://acme.atlassian.net/wiki/spaces/SOC/overview         -> .../wiki, SOC, the whole space
+ *   https://acme.atlassian.net/wiki/spaces/SOC/pages/123/Title  -> .../wiki, SOC, page 123 and all under it
+ *   https://acme.atlassian.net/wiki/spaces/SOC/folder/456       -> .../wiki, SOC, all in folder 456
+ *   https://confluence.corp/display/SOC/Some+Page                -> site root, SOC, the whole space
+ *   https://confluence.corp/spaces/viewspace.action?key=SOC      -> site root, SOC, the whole space
+ *   https://acme.atlassian.net/wiki                              -> as it is, CONFLUENCE_SPACE_KEY
  * The space named in the URL wins over CONFLUENCE_SPACE_KEY, which is for a
- * plain site URL. The whole space is read either way, not one page of it.
+ * plain site URL. A page or folder narrows the read to that part of the tree
+ * (Cloud, API v2); everything else reads the whole space.
  */
-export function confluenceSite(raw: string | undefined, spaceKey: string | undefined): { baseUrl: string; spaceKey: string } {
+export interface ConfluenceSite {
+  baseUrl: string;
+  spaceKey: string;
+  /** The page or folder to read from, '' for the whole space. */
+  rootType: '' | 'page' | 'folder';
+  rootId: string;
+}
+
+export function confluenceSite(raw: string | undefined, spaceKey: string | undefined): ConfluenceSite {
   const given = (spaceKey ?? '').trim();
   const text = (raw ?? '').trim();
+  const whole = { rootType: '' as const, rootId: '' };
   let url: URL;
   try {
     url = new URL(text);
   } catch {
-    return { baseUrl: text.replace(/\/+$/, ''), spaceKey: given };
+    return { baseUrl: text.replace(/\/+$/, ''), spaceKey: given, ...whole };
   }
   const path = url.pathname.replace(/\/+$/, '');
-  const m = path.match(/^(.*?)\/(?:spaces|display)\/([^/]+)/);
+  const m = path.match(/^(.*?)\/(?:spaces|display)\/([^/]+)(.*)$/);
   if (m && m[2] !== 'viewspace.action') {
-    return { baseUrl: url.origin + m[1], spaceKey: decodeURIComponent(m[2]) };
+    const site = { baseUrl: url.origin + m[1], spaceKey: decodeURIComponent(m[2]) };
+    // Cloud's /spaces/KEY/pages/ID/Title (or pages/edit-v2/ID) and /spaces/KEY/folder/ID.
+    const page = m[3].match(/^\/pages\/(?:edit-v2\/)?(\d+)/);
+    if (page) return { ...site, rootType: 'page', rootId: page[1] };
+    const folder = m[3].match(/^\/folder\/(\d+)/);
+    if (folder) return { ...site, rootType: 'folder', rootId: folder[1] };
+    return { ...site, ...whole };
   }
   // Server/DC's .action pages: the site is what comes before them, the space
   // their key= if they carry one (viewpage.action?pageId= does not).
   const action = path.match(/^(.*?)\/(?:spaces|pages)\/[^/]+\.action$/);
   if (action) {
     const key = url.searchParams.get('key') ?? url.searchParams.get('spaceKey');
-    return { baseUrl: url.origin + action[1], spaceKey: key ?? given };
+    return { baseUrl: url.origin + action[1], spaceKey: key ?? given, ...whole };
   }
-  return { baseUrl: url.origin + path, spaceKey: given };
+  return { baseUrl: url.origin + path, spaceKey: given, ...whole };
 }
 
 export default () => ({

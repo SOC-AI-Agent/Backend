@@ -171,8 +171,17 @@ CONFLUENCE_EMAIL=<อีเมล service account>                  # basic auth
 CONFLUENCE_API_TOKEN=<API token จาก id.atlassian.com → Security → API tokens>
 ```
 
-`CONFLUENCE_BASE_URL` ใส่ URL ของ space หรือของหน้าไหนก็ได้ใน space นั้นที่ copy จาก browser ระบบแยกที่อยู่ของ Confluence
-กับ space key ให้เอง แล้วอ่าน**ทุกหน้าใน space** (ไม่ใช่แค่หน้าที่ชี้) space key ใน URL มาก่อน `CONFLUENCE_SPACE_KEY`
+`CONFLUENCE_BASE_URL` ใส่ URL ที่ copy จาก browser ได้เลย ระบบแยกที่อยู่ของ Confluence กับ space key ให้เอง
+(space key ใน URL มาก่อน `CONFLUENCE_SPACE_KEY`) และ URL บอกว่าจะอ่านอะไร:
+
+| URL | อ่าน |
+| --- | --- |
+| `.../wiki/spaces/CMS/overview` | ทุกหน้าใน space |
+| `.../wiki/spaces/CMS/pages/123456/Use+Case+Category` | หน้านั้นและหน้าย่อยทุกระดับใต้มัน (เช่น use case ทั้งหมด ไม่รวม Knowledge Base) |
+| `.../wiki/spaces/CMS/folder/456` | ทุกหน้าใน folder นั้น |
+
+หน้าที่ `soc-ai` ใช้เป็น playbook ต้องมีตาราง Page Properties ที่มีแถว `Use Case` หรือ `Alert Name` หน้าที่ไม่มี
+(เช่นหน้าสารบัญ) ถูกข้ามเอง
 ถ้าใส่แค่ที่อยู่ของ Confluence ต้องตั้ง `CONFLUENCE_SPACE_KEY` คือส่วนหลัง `/spaces/` ใน URL ของ space
 (หรือ Space settings → Space details → Key)
 
