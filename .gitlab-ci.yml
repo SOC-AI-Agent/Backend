@@ -422,7 +422,15 @@ deploy_production:
     # let it through, is the certificate trusted, does Confluence answer. A
     # report only, like step 7: it never fails the deploy. check_confluence,
     # after it, reads the space with the credentials.
-    - docker exec soc-core-worker node dist/scripts/confluence-check.js --network || echo "(not reachable yet — the reason is above; the deploy itself is done)"
+    - |
+      if docker exec soc-core-worker test -f dist/scripts/confluence-check.js; then
+        docker exec soc-core-worker node dist/scripts/confluence-check.js --network \
+          || echo "(not reachable yet — the reason is above; the deploy itself is done)"
+      else
+        echo "This worker has no dist/scripts/confluence-check.js: src/scripts/confluence-check.ts is not"
+        echo "in this repository yet. Copy it together with src/modules/enrichment/playbook-sync.service.ts"
+        echo "and src/config/configuration.ts (it calls what they add). Skipped; the deploy itself is done."
+      fi
 
 # Prints the production database's tables, columns, enums, constraints,
 # indexes, Prisma migration history, and its drift from the deployed
