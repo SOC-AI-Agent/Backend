@@ -136,52 +136,124 @@ export class PlaybookSyncService implements OnApplicationBootstrap, OnModuleDest
    * grew past one page of results would otherwise lose playbooks silently, and
    * the alerts they cover would start reporting "no playbook". Throws rather
    * than returning an empty list, which soc-ai would take for an empty space.
+   *
+   * Public for scripts/confluence-check, which reads the space the same way.
    */
-  private async readSpace(timeoutMs: number): Promise<PlaybookPage[]> {
-    const { baseUrl, apiPath, spaceKey, email, apiToken, pageLimit } = this.config.get('playbook.confluence');
+  async readSpace(timeoutMs: number): Promise<PlaybookPage[]> {
+    return this.apiVersion() === 'v2' ? this.readSpaceV2(timeoutMs) : this.readSpaceV1(timeoutMs);
+  }
+
+  /** v1 or v2, from CONFLUENCE_API (auto: v2 for Atlassian's cloud). */
+  apiVersion(): 'v1' | 'v2' {
+    const { baseUrl, api } = this.config.get('playbook.confluence');
+    if (api === 'v1' || api === 'v2') return api;
+    try {
+      return new URL(baseUrl).hostname.endsWith('.atlassian.net') ? 'v2' : 'v1';
+    } catch {
+      return 'v1';
+    }
+  }
+
+  /** Server/DC (and Cloud while it lasts): GET <apiPath>/content, offset paging. */
+  private async readSpaceV1(timeoutMs: number): Promise<PlaybookPage[]> {
+    const { baseUrl, apiPath, spaceKey, pageLimit } = this.config.get('playbook.confluence');
+    const raw: any[] = [];
+    for (let start = 0; ; ) {
+      const data = await this.get(`${baseUrl}${apiPath}/content`, timeoutMs, {
+        spaceKey, type: 'page', status: 'current',
+        expand: 'body.storage,version', limit: pageLimit, start,
+      });
+      const batch = this.results(data);
+      raw.push(...batch);
+      // The end is where Confluence stops offering a next page, not the first
+      // batch shorter than asked for: it may cap the page size below
+      // CONFLUENCE_PAGE_LIMIT (it does when bodies are expanded), and stopping
+      // there would index the first batch of the space and quietly drop the rest.
+      // Without _links at all, by the page size it says it used.
+      const links = data._links;
+      const more = links ? Boolean(links.next) : batch.length >= (data.limit ?? pageLimit);
+      if (!more || batch.length === 0) break;
+      start += batch.length;
+    }
+    return this.toPages(raw, baseUrl);
+  }
+
+  /**
+   * Cloud: the space's id from its key, then GET /api/v2/spaces/{id}/pages
+   * with the bodies in storage format, following the cursor in _links.next.
+   */
+  private async readSpaceV2(timeoutMs: number): Promise<PlaybookPage[]> {
+    const { baseUrl, spaceKey, pageLimit } = this.config.get('playbook.confluence');
+    const spaces = this.results(await this.get(`${baseUrl}/api/v2/spaces`, timeoutMs, { keys: spaceKey }));
+    const space = spaces.find((s) => s?.key === spaceKey) ?? spaces[0];
+    if (!space?.id) {
+      throw new Error(`space ${spaceKey} not found — or the account cannot see it`);
+    }
+    const raw: any[] = [];
+    let base = baseUrl;
+    let url: string | null = `${baseUrl}/api/v2/spaces/${space.id}/pages`;
+    let params: Record<string, unknown> | undefined = {
+      'body-format': 'storage', status: 'current', limit: Math.min(pageLimit, 250),
+    };
+    while (url) {
+      const data = await this.get(url, timeoutMs, params);
+      raw.push(...this.results(data));
+      base = data._links?.base ?? base;
+      // next is a path from the site's root, cursor and all.
+      const next: string | undefined = data._links?.next;
+      url = next ? new URL(next, baseUrl).toString() : null;
+      params = undefined;
+    }
+    return this.toPages(raw, base);
+  }
+
+  /** One GET to Confluence: the credentials, CONFLUENCE_PROXY, and what each refusal means. */
+  private async get(url: string, timeoutMs: number, params?: Record<string, unknown>): Promise<any> {
+    const { spaceKey, email, apiToken, proxy } = this.config.get('playbook.confluence');
     // Cloud: email + API token as basic auth. Server/DC: a personal access token as a bearer.
     const authorization = email
       ? `Basic ${Buffer.from(`${email}:${apiToken}`).toString('base64')}`
       : `Bearer ${apiToken}`;
-
-    const raw: any[] = [];
-    for (let start = 0; ; ) {
-      const resp = await firstValueFrom(
-        this.http.get<any>(`${baseUrl}${apiPath}/content`, {
-          params: {
-            spaceKey, type: 'page', status: 'current',
-            expand: 'body.storage,version', limit: pageLimit, start,
-          },
-          headers: { Authorization: authorization, Accept: 'application/json' },
-          timeout: timeoutMs,
-          maxContentLength: Infinity,
-          validateStatus: () => true,
-        }),
-      );
-      if (resp.status === 401) throw new Error('Confluence rejected the credentials (401)');
-      if (resp.status === 403) throw new Error(`Confluence refused the read (403) — the account cannot see space ${spaceKey}`);
-      if (resp.status === 404) {
-        throw new Error(`space ${spaceKey} not found (404) — or CONFLUENCE_BASE_URL is missing a path such as /wiki`);
-      }
-      if (resp.status >= 400) throw new Error(`Confluence returned ${resp.status}`);
-      // A 200 is not proof of JSON: an SSO gateway in front of Confluence answers
-      // 200 with its login page.
-      const batch = resp.data?.results;
-      if (!Array.isArray(batch)) {
-        throw new Error('Confluence answered without a results list — is CONFLUENCE_BASE_URL behind a login page?');
-      }
-      raw.push(...batch);
-      if (batch.length < pageLimit) break;
-      start += batch.length;
+    const resp = await firstValueFrom(
+      this.http.get<any>(url, {
+        params,
+        headers: { Authorization: authorization, Accept: 'application/json' },
+        timeout: timeoutMs,
+        maxContentLength: Infinity,
+        validateStatus: () => true,
+        // axios tunnels HTTPS through an HTTP proxy with CONNECT. false: no
+        // proxy at all, not one picked up from the environment.
+        proxy: proxy ? (new URL(proxy) as any) : false,
+      }),
+    );
+    const via = proxy ? ', or the proxy refused' : '';
+    if (resp.status === 401) throw new Error('Confluence rejected the credentials (401)');
+    if (resp.status === 403) throw new Error(`Confluence refused the read (403) — the account cannot see space ${spaceKey}${via}`);
+    if (resp.status === 407) throw new Error('the proxy wants credentials of its own (407): CONFLUENCE_PROXY=http://user:pass@host:port');
+    if (resp.status === 404) {
+      throw new Error(`not found (404) — space ${spaceKey}, or CONFLUENCE_BASE_URL is missing a path such as /wiki`);
     }
+    if (resp.status >= 400) throw new Error(`Confluence returned ${resp.status}`);
+    return resp.data;
+  }
 
+  /** The results list, or an error: a 200 is not proof of JSON. */
+  private results(data: any): any[] {
+    // An SSO gateway in front of Confluence answers 200 with its login page.
+    if (!Array.isArray(data?.results)) {
+      throw new Error('Confluence answered without a results list — is CONFLUENCE_BASE_URL behind a login page?');
+    }
+    return data.results;
+  }
+
+  private toPages(raw: any[], base: string): PlaybookPage[] {
     return raw
       .filter((p) => p && typeof p === 'object')
       .map((p) => ({
         id: String(p.id ?? ''),
         title: p.title ?? '',
         version: p.version?.number,
-        url: baseUrl + (p._links?.webui ?? ''),
+        url: base + (p._links?.webui ?? ''),
         body: p.body?.storage?.value ?? '',
       }));
   }

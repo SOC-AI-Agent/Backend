@@ -98,6 +98,19 @@ export default () => ({
       email: process.env.CONFLUENCE_EMAIL ?? '',
       apiToken: process.env.CONFLUENCE_API_TOKEN ?? '',
       pageLimit: toInt(process.env.CONFLUENCE_PAGE_LIMIT, 200),
+      /**
+       * Which REST API: v2 (/api/v2/spaces/{id}/pages) for Cloud, where
+       * Atlassian is retiring v1; v1 (<apiPath>/content) for Server/DC, which
+       * has only v1. auto picks v2 for *.atlassian.net and v1 otherwise.
+       */
+      api: (process.env.CONFLUENCE_API ?? 'auto').trim().toLowerCase(),
+      /**
+       * An HTTP proxy for the Confluence calls alone, e.g. the office proxy for
+       * Cloud from a host with no direct way out. HTTPS goes through it as a
+       * CONNECT tunnel, so the proxy sees the host name, never the token or the
+       * pages. Blank: direct. Nothing else the backend calls uses it.
+       */
+      proxy: (process.env.CONFLUENCE_PROXY ?? '').trim(),
     },
     /** One match, asked of soc-ai once per alert before the model runs. */
     timeoutMs: toInt(process.env.PLAYBOOK_TIMEOUT, 15) * 1000,

@@ -262,9 +262,18 @@ deploy_production:
         url="postgresql://${user:-socai}:$(pct "$(dotenv POSTGRES_PASSWORD)")@soc-test-db:5432/${name:-socai}"
       fi
       docker compose up -d --wait soc-redis
-      { grep -v -E '^(CORE_DATABASE_URL|REDIS_URL|REDIS_HOST)=' .env
+      # Confluence Cloud is on the internet, which this host reaches only
+      # through the office proxy: the same BUILD_PROXY the builds use, for the
+      # Confluence calls alone. A CONFLUENCE_PROXY CI variable wins, an empty
+      # one included (no proxy). Server/DC inside the network: direct.
+      cproxy=$(dotenv CONFLUENCE_PROXY)
+      case "$(dotenv CONFLUENCE_BASE_URL)" in
+        *.atlassian.net*) [ -n "${CONFLUENCE_PROXY+set}" ] || cproxy="${BUILD_PROXY:-}" ;;
+      esac
+      { grep -v -E '^(CORE_DATABASE_URL|REDIS_URL|REDIS_HOST|CONFLUENCE_PROXY)=' .env
         printf 'CORE_DATABASE_URL=%s\n' "$url"
         printf 'REDIS_URL=redis://soc-core-redis:6379/0\nREDIS_HOST=soc-core-redis\n'
+        printf 'CONFLUENCE_PROXY=%s\n' "$cproxy"
       } > .env.new
       mv .env.new .env
 
@@ -580,6 +589,64 @@ check_splunk_requirement:
         echo "  Which destinations did 10.1.100.11 talk to"
         exit 1
       fi
+
+# Can the worker read the playbook space in Confluence? In the deployed
+# soc-core-worker, with its .env, network, CONFLUENCE_PROXY and CA:
+#   0. the worker, and whether the Confluence settings reached it (the token as
+#      set / NOT SET only, a proxy without its password)
+#   1. scripts/confluence-check: the whole space read the way the hourly sync
+#      reads it — same API (v2 for Cloud, v1 for Server/DC), credentials, proxy
+#      and paging — and how many pages that came to; a failure says what it
+#      means (DNS, firewall, proxy, certificate, 401/403/404)
+#   2. the worker's own last sync results from its log: whether soc-ai indexed
+#      them, and how many playbooks that made
+# Runs by itself on main right after deploy_production, a button elsewhere.
+# Read-only; nothing is sent to soc-ai or written to Confluence. Allowed to
+# fail, like check_splunk: ⚠ with the reason, the pipeline still passed.
+check_confluence:
+  stage: verify
+  image: docker:latest
+  tags:
+    - llm
+  variables:
+    DOCKER_HOST: unix:///var/run/docker.sock
+    DOCKER_TLS_CERTDIR: ""
+  environment:
+    name: production
+    action: access
+  needs:
+    - job: deploy_production
+      optional: true
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      allow_failure: true
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+      allow_failure: true
+  script:
+    - |
+      echo "== 0. The deployed worker =="
+      docker inspect -f 'container created {{.Created}}' soc-core-worker
+      docker exec soc-core-worker sh -c '
+        for k in CONFLUENCE_BASE_URL CONFLUENCE_SPACE_KEY CONFLUENCE_EMAIL CONFLUENCE_API CONFLUENCE_PROXY; do
+          eval "v=\${$k:-}"
+          [ "$k" = CONFLUENCE_PROXY ] && v=${v#*@}
+          printf "%-21s %s\n" "$k" "${v:-NOT SET}"
+        done
+        [ -n "${CONFLUENCE_API_TOKEN:-}" ] && t=set || t="NOT SET"
+        printf "%-21s %s\n" CONFLUENCE_API_TOKEN "$t"'
+      if ! docker exec soc-core-worker test -f dist/scripts/confluence-check.js; then
+        echo "This worker was built from code without dist/scripts/confluence-check.js:"
+        echo "the current code has not been deployed. See deploy_production's log in this pipeline."
+        exit 1
+      fi
+    - echo "== 1. Reading the space, as the sync does =="
+    - docker exec soc-core-worker node dist/scripts/confluence-check.js
+    - |
+      echo "== 2. The worker's last syncs (its log) =="
+      docker logs soc-core-worker 2>&1 \
+        | grep -E 'playbooks synced|playbook sync failed|playbooks are not synced' | tail -n 3 \
+        || echo "(none yet: the first sync starts when the worker does)"
 
 # ── Splunk data catalogue ────────────────────────────────────────────────────
 #

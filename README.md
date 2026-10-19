@@ -122,6 +122,7 @@ seen on the host is a pipeline job:
 | `deploy_production` | on `main` | ports, build, database, backup, migrate, seed roles, start, health, address |
 | `check_splunk` | on `main`, after the deploy | can stage 2 reach Splunk |
 | `check_splunk_requirement` | ▶ | one requirement end to end against Splunk |
+| `check_confluence` | on `main`, after the deploy | can the worker read the playbook space; its last syncs |
 | `export_catalog` | ▶ | the Splunk data catalogue, as an artifact |
 
 The inspection and check jobs are allowed to fail: a ⚠, never a failed

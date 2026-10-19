@@ -159,14 +159,30 @@ THREATQ_TOKEN=<token>
 
 Backend (worker) อ่านทุกหน้าใน space playbook ตรงจาก REST API ทุก `PLAYBOOK_SYNC_MINUTES`
 
+**Cloud** (`*.atlassian.net`): ใช้ API v2 เองอัตโนมัติ และออกเน็ตผ่าน proxy ของ office ตัวเดียวกับที่ใช้ build
+(`BUILD_PROXY`) deploy ใส่ให้เอง ไม่ต้องตั้ง `CONFLUENCE_PROXY`
+
 ```bash
-CONFLUENCE_BASE_URL=https://your-org.atlassian.net/wiki   # Server/DC: https://confluence.corp
+CONFLUENCE_BASE_URL=https://your-org.atlassian.net/wiki   # ต้องมี /wiki
 CONFLUENCE_SPACE_KEY=SOC
-CONFLUENCE_EMAIL=<อีเมล service account>   # Cloud — basic auth คู่กับ API token
-CONFLUENCE_API_TOKEN=<API token>            # Server/DC: personal access token, ไม่ต้องตั้ง EMAIL
+CONFLUENCE_EMAIL=<อีเมล service account>                  # basic auth คู่กับ API token
+CONFLUENCE_API_TOKEN=<API token จาก id.atlassian.com → Security → API tokens>
 ```
 
-ใช้ account ที่เห็นเฉพาะ space playbook และอ่านได้อย่างเดียว
+proxy ใช้เฉพาะการเรียก Confluence ไม่มีผลกับ `soc-ai`, Splunk หรือ ThreatQ ถ้าต้องการ proxy ตัวอื่น ตั้ง CI variable
+`CONFLUENCE_PROXY` เอง ตั้งเป็นค่าว่างคือไม่ใช้ proxy
+
+**Server / Data Center** ภายในบริษัท: ใช้ API v1 ต่อตรง ไม่ต้องตั้ง proxy
+
+```bash
+CONFLUENCE_BASE_URL=https://confluence.corp
+CONFLUENCE_SPACE_KEY=SOC
+CONFLUENCE_API_TOKEN=<personal access token>   # ไม่ต้องตั้ง EMAIL: ส่งเป็น bearer
+```
+
+ใช้ account ที่เห็นเฉพาะ space playbook และอ่านได้อย่างเดียว ตรวจว่าใช้ได้ด้วย job `check_confluence`
+(รันเองหลัง deploy บน `main`): บอกจำนวนหน้าที่อ่านได้ หรือบอกว่าติดที่ DNS, firewall, proxy, certificate
+หรือ 401/403/404 และแสดงผล sync ล่าสุดของ worker
 
 ---
 
