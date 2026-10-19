@@ -9,6 +9,10 @@
  * same API, credentials, proxy and paging) and prints how many pages it found
  * and the first few titles. Read-only; sends nothing to soc-ai. The token is
  * never printed, nor a password in CONFLUENCE_PROXY.
+ *
+ * With --network (deploy_production's last step) it only asks whether
+ * Confluence answers, sending no credentials at all: the name, the proxy, the
+ * certificate and the path, before anything about the account.
  */
 import { existsSync } from 'fs';
 
@@ -55,6 +59,35 @@ async function main(): Promise<void> {
     `token ${c.apiToken ? `set (${c.apiToken.length} chars)` : 'NOT SET'}`);
   console.log(`proxy          ${proxy}`);
   console.log(`extra CA       ${ca ? `${ca} (${existsSync(ca) ? 'found' : 'MISSING'})` : 'none'}`);
+
+  if (process.argv.includes('--network')) {
+    if (!c.baseUrl) {
+      console.log('network        CONFLUENCE_BASE_URL is not set: nothing to check');
+      return;
+    }
+    // Unauthenticated, Confluence may say 401 before it says the path is wrong:
+    // the one path Cloud has is checked here instead.
+    const site = new URL(c.baseUrl);
+    if (site.hostname.endsWith('.atlassian.net') && !site.pathname.replace(/\/+$/, '').endsWith('/wiki')) {
+      console.log(`warning        a Cloud address ends in /wiki: CONFLUENCE_BASE_URL=${site.origin}/wiki`);
+    }
+    const r = await sync.reach(20_000);
+    console.log(`network        reached ${new URL(r.url).host}${c.proxy ? ' through the proxy' : ''}: HTTP ${r.status} (no credentials sent)`);
+    if (r.status === 401 || r.status === 403) {
+      console.log('               Confluence answers and asks who is calling: network, proxy, certificate and path are fine');
+    } else if (r.status === 200 && !r.html) {
+      console.log('               Confluence answers (anonymous access is on): network, proxy, certificate and path are fine');
+    } else if (r.status >= 300 && r.status < 400) {
+      console.log(`               redirected${r.location ? ` to ${r.location}` : ''}: a login page in front of the API? check CONFLUENCE_BASE_URL`);
+    } else if (r.status === 404) {
+      console.log('               nothing at this path: CONFLUENCE_BASE_URL should be https://<org>.atlassian.net/wiki (Cloud) or the site root (Server/DC)');
+    } else if (r.status === 407) {
+      console.log('               the proxy wants credentials of its own: CONFLUENCE_PROXY=http://user:pass@host:port');
+    } else {
+      console.log(`               not an answer Confluence's API gives${r.html ? ' (a web page)' : ''}: check CONFLUENCE_BASE_URL`);
+    }
+    return;
+  }
 
   if (!c.baseUrl || !c.apiToken || !c.spaceKey) {
     throw new Error('CONFLUENCE_BASE_URL, CONFLUENCE_API_TOKEN and CONFLUENCE_SPACE_KEY must all be set (CI variables): the sync is off');

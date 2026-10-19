@@ -128,6 +128,7 @@ job เหล่านี้เป็นปุ่ม ▶
 | 5. Health | รอ `/health` จากใน container | |
 | 6. Address | ถาม `/health` ผ่าน IP และ port ของเครื่อง แล้วตั้งลิงก์ environment ของ GitLab | port publish แล้วแต่เรียกจากที่อยู่นั้นไม่ได้ |
 | 7. Splunk connection | จาก worker ตัวใหม่: ต่อ `SPLUNK_MCP_URL` แบบไม่ตรวจ cert (ไม่ส่ง token) แล้วแสดง cert ว่าใครออกและ worker เชื่อไหม ([splunk-mcp.md ข้อ 5](splunk-mcp.md#5-ตรวจว่าใช้ได้-job-check_splunk)) | ไม่ fail ไม่ว่าผลจะเป็นอะไร แค่รายงาน |
+| 8. Confluence connection | จาก worker ตัวใหม่: ต่อ Confluence ผ่าน proxy และ CA เดียวกับที่ sync ใช้ โดยไม่ส่ง credential แล้วบอกว่าติดที่ DNS, proxy, certificate หรือ path ไหม (`check_confluence` ตรวจ credential และจำนวนหน้าต่อ) | ไม่ fail แค่รายงาน |
 
 ### DB ตัวไหน
 

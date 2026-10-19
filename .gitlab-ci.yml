@@ -415,6 +415,15 @@ deploy_production:
         esac ;;
       esac
 
+    - echo "========== 8. Confluence connection =========="
+    # From the worker just started, the way its hourly playbook sync connects —
+    # the same API, CONFLUENCE_PROXY (the office proxy for Cloud, step 2) and
+    # CA — but with no credentials sent: does the name resolve, does the proxy
+    # let it through, is the certificate trusted, does Confluence answer. A
+    # report only, like step 7: it never fails the deploy. check_confluence,
+    # after it, reads the space with the credentials.
+    - docker exec soc-core-worker node dist/scripts/confluence-check.js --network || echo "(not reachable yet — the reason is above; the deploy itself is done)"
+
 # Prints the production database's tables, columns, enums, constraints,
 # indexes, Prisma migration history, and its drift from the deployed
 # prisma/schema.prisma — the inventory prisma/migrations/0_init was written

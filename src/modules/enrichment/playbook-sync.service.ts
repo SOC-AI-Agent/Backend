@@ -143,6 +143,35 @@ export class PlaybookSyncService implements OnApplicationBootstrap, OnModuleDest
     return this.apiVersion() === 'v2' ? this.readSpaceV2(timeoutMs) : this.readSpaceV1(timeoutMs);
   }
 
+  /**
+   * Whether Confluence answers at all, with no credentials sent: the network,
+   * CONFLUENCE_PROXY and the certificate, apart from the account. Resolves with
+   * what it answered; rejects on a network or TLS failure. Redirects are not
+   * followed, so a login page in front of the API shows as one.
+   *
+   * For scripts/confluence-check --network (deploy_production's last step).
+   */
+  async reach(timeoutMs: number): Promise<{ url: string; status: number; location?: string; html: boolean }> {
+    const { baseUrl, apiPath, proxy } = this.config.get('playbook.confluence');
+    const url = this.apiVersion() === 'v2' ? `${baseUrl}/api/v2/spaces` : `${baseUrl}${apiPath}/space`;
+    const resp = await firstValueFrom(
+      this.http.get<any>(url, {
+        params: { limit: 1 },
+        headers: { Accept: 'application/json' },
+        timeout: timeoutMs,
+        maxRedirects: 0,
+        validateStatus: () => true,
+        proxy: proxy ? (new URL(proxy) as any) : false,
+      }),
+    );
+    return {
+      url,
+      status: resp.status,
+      location: resp.headers?.location,
+      html: String(resp.headers?.['content-type'] ?? '').includes('text/html'),
+    };
+  }
+
   /** v1 or v2, from CONFLUENCE_API (auto: v2 for Atlassian's cloud). */
   apiVersion(): 'v1' | 'v2' {
     const { baseUrl, api } = this.config.get('playbook.confluence');
