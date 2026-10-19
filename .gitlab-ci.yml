@@ -427,9 +427,20 @@ deploy_production:
         docker exec soc-core-worker node dist/scripts/confluence-check.js --network \
           || echo "(not reachable yet — the reason is above; the deploy itself is done)"
       else
-        echo "This worker has no dist/scripts/confluence-check.js: src/scripts/confluence-check.ts is not"
-        echo "in this repository yet. Copy it together with src/modules/enrichment/playbook-sync.service.ts"
-        echo "and src/config/configuration.ts (it calls what they add). Skipped; the deploy itself is done."
+        # Told apart from this job's own checkout, which is the commit just built.
+        echo "This worker has no dist/scripts/confluence-check.js. Skipped; the deploy itself is done."
+        if [ -f src/scripts/confluence-check.ts ]; then
+          echo "src/scripts/confluence-check.ts is in this commit ($CI_COMMIT_SHORT_SHA) but did not reach the"
+          echo "image — what the build put in dist/scripts:"
+          docker exec soc-core-worker ls dist/scripts || true
+        else
+          echo "src/scripts/confluence-check.ts is not in this commit ($CI_COMMIT_SHORT_SHA)."
+          echo "  in src/scripts/ now: $(ls src/scripts 2>/dev/null | tr '\n' ' ')"
+          found=$(find . -name 'confluence-check*' -not -path './node_modules/*' 2>/dev/null)
+          [ -z "$found" ] || echo "  found elsewhere, not where it is built from: $found"
+          echo "  Put it at src/scripts/confluence-check.ts, with src/modules/enrichment/playbook-sync.service.ts"
+          echo "  and src/config/configuration.ts (it calls what they add)."
+        fi
       fi
 
 # Prints the production database's tables, columns, enums, constraints,
