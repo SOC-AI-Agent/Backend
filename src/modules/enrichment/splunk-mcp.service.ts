@@ -74,10 +74,24 @@ export interface SplunkAnswer {
   mock: boolean;
 }
 
+/** Text-to-SPL alone: what Splunk wrote for a question, and whether the guard would let it run. */
+export interface SplunkDraft {
+  /** The text that was sent to Text-to-SPL. */
+  prompt: string;
+  /** The SPL as Text-to-SPL returned it. */
+  generated: string;
+  /** What would run: the guard passed it, with the window added. */
+  spl?: string;
+  /** Why the guard would not run it. */
+  refused?: string;
+}
+
 export interface SplunkSession {
   /** The argument of the Text-to-SPL tool the request is sent in, as read from its schema. */
   promptArg: string;
   ask(question: SplunkQuestion): Promise<SplunkAnswer>;
+  /** Only the first half of ask: Text-to-SPL and the guard. Nothing is searched. */
+  generate(question: SplunkQuestion): Promise<SplunkDraft>;
   close(): Promise<void>;
 }
 
@@ -268,6 +282,16 @@ export class SplunkMcpService {
           limit,
           mock: ran?.mock === true,
         };
+      },
+      generate: async (q: SplunkQuestion): Promise<SplunkDraft> => {
+        const { prompt, earliest, latest } = this.promptFor(q);
+        const generated = splOf(await call(generateTool, { [promptArg]: prompt }));
+        if (!generated) throw new Error(`${generateTool} returned no SPL for: ${prompt}`);
+        try {
+          return { prompt, generated, spl: checkGeneratedSpl(withTimeWindow(generated, earliest, latest)) };
+        } catch (err: any) {
+          return { prompt, generated, refused: err?.message ?? String(err) };
+        }
       },
       close: () => client.close(),
     };

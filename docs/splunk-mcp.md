@@ -310,6 +310,24 @@ connected      yes — both tools found; Text-to-SPL takes the request in "<arg>
 
 ---
 
+### ลองจากหน้า API docs: `POST /v1/splunk/text-to-spl`
+
+ส่ง requirement หนึ่งข้อให้ Text-to-SPL ของ Splunk แล้วดู SPL ที่ได้ **ไม่ค้นข้อมูลจริง** ใช้ prompt, การเชื่อมต่อ,
+token, CA และ guard ชุดเดียวกับ lookup จริง ต้อง login เป็น `admin` หรือ `analyst`
+
+1. เปิด `http://10.40.35.18:8082/docs` (หรือ `http://10.40.35.18:3002/docs` ผ่าน dashboard)
+2. `POST /auth/login` → copy `access_token` → กด **Authorize** → ใส่ token ในช่อง bearer
+3. ที่หัวข้อ **Splunk** → `POST /v1/splunk/text-to-spl` → Try it out → ใส่ body เช่น
+   ```json
+   { "requirement": "Failed login attempts for user jdoe in the last 24 hours",
+     "index": "main", "details": { "user": "jdoe" } }
+   ```
+   มีแค่ `requirement` ที่ต้องใส่ ที่เหลือใส่หรือไม่ใส่ก็ได้ (`index`, `sourcetype`, `details`, `earliest`, `latest`)
+
+คำตอบมี `prompt` (ข้อความที่ส่งให้ Splunk), `generated_spl` (SPL ที่ Splunk เขียน), `spl` (SPL ที่ lookup จะรันหลังผ่าน
+guard) หรือ `refused` (เหตุผลที่ guard ไม่ให้รัน) ถ้าต่อ Splunk ไม่ได้ จะได้ `502` พร้อมสาเหตุใน `detail`
+ข้อความที่ส่งไปถูกประมวลผลที่ Splunk Cloud เหมือน lookup จริง (ดูคำเตือนในหัวข้อภาพรวม)
+
 ## 6. ช่วงแรกที่เริ่มใช้
 
 - **รูปแบบคำตอบของ Text-to-SPL ไม่มีเอกสาร** Backend ดึง SPL จาก field `spl`, `query` หรือ `search`,

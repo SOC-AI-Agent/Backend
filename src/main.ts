@@ -69,6 +69,7 @@ async function bootstrapApi() {
     .addTag('Admin', 'Users, API keys, the audit log and the counters. Admin (and, for keys and stats, analyst) only.')
     .addTag('System', 'Health.')
     .addTag('Internal', 'Diagnostics that are off unless enabled.')
+    .addTag('Splunk', "Splunk's Text-to-SPL by hand: one requirement in, the SPL Splunk writes out. Nothing is searched.")
     .build();
   // persistAuthorization: a page reload does not throw the token away.
   SwaggerModule.setup('docs', app, SwaggerModule.createDocument(app, swagger), {
