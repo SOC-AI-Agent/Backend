@@ -208,11 +208,13 @@ MCP_AUTH_TOKEN="$MCP_TOKEN" \
 JWT_SECRET_KEY="$JWT_SECRET_KEY_VAL" \
 THREATQ_BASE_URL="" \
 SPLUNK_LOOKUP_MODE="${SPLUNK_LOOKUP_MODE:-manual}" \
+SPLUNK_ALERT_FREQUENCY="false" \
 OLLAMA_MODEL="$PRIMARY_MODEL" \
 ALLOWED_ORIGINS="http://${VPS_HOST}:3002,http://localhost:3002,http://soc-frontend" \
   write_env Backend \
     "AI_SERVICE_AUTH_TOKEN=$AI_TOKEN" \
     "MCP_AUTH_TOKEN=$MCP_TOKEN" \
+    "SPLUNK_ALERT_FREQUENCY=false" \
     "ALLOWED_ORIGINS=http://${VPS_HOST}:3002,http://localhost:3002,http://soc-frontend"
 
 # AI-Service/.env
@@ -225,8 +227,10 @@ LLM_SERVER_URL="http://host.docker.internal:8001" \
 # MCP-Server/.env
 MCP_AUTH_TOKEN="$MCP_TOKEN" \
 CONFLUENCE_MCP_AUTH_TOKEN="$CONFLUENCE_MCP_TOKEN" \
+SPLUNK_ALERT_INDEX="" \
   write_env MCP-Server \
-    "MCP_AUTH_TOKEN=$MCP_TOKEN"
+    "MCP_AUTH_TOKEN=$MCP_TOKEN" \
+    "SPLUNK_ALERT_INDEX="
 
 # MCP-Server/external/splunk/.env
 SPLUNK_PASSWORD="$SPLUNK_ADMIN_PASS" \
@@ -507,6 +511,7 @@ Web URLs:
                      login: admin / ${AGENT_ADMIN_PASS}
   Splunk Web UI    : http://${VPS_HOST}:8000
                      login: admin / ${SPLUNK_ADMIN_PASS}
+  FortiSOAR Sim    : http://${VPS_HOST}:8090
 
 Next steps:
   1) Confluence (external + proxy):
@@ -524,8 +529,8 @@ Next steps:
   2) Firewall (UFW) — DO NOT leave Agent-Server (:8001) or Splunk (:8000) open to the public internet without IP allowlist:
        sudo ufw allow OpenSSH
        sudo ufw allow 3002/tcp
-       # Allow 7100/8000/8001/8082 only from your IP (recommended):
-       # sudo ufw allow from <YOUR_IP> to any port 7100,8000,8001,8082 proto tcp
+       # Allow 7100/8000/8001/8082/8090 only from your IP (recommended):
+       # sudo ufw allow from <YOUR_IP> to any port 7100,8000,8001,8082,8090 proto tcp
        sudo ufw enable
 ====================================================================
 EOF

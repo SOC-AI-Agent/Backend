@@ -63,8 +63,11 @@ export class EnrichmentService {
     // Asked in parallel with nothing, because it is one HTTP call and the
     // model cannot start until the whole block is ready anyway.
     const playbook = await this.playbook.match(alertName);
+    const searchableSkipped = skipped
+      .filter((s) => s.reason === 'private or non-routable address' || s.reason.startsWith('listed as internal'))
+      .map((s) => ({ type: s.type, value: s.value, source: 'internal' }));
     const lookups = this.queryPlan.build(
-      indicators, source, alertName, rawLog, alertTime, playbook,
+      [...indicators, ...searchableSkipped], source, alertName, rawLog, alertTime, playbook,
     );
     this.logger.log(
       `extracted ${indicators.length} indicators (${skipped.length} skipped), ` +

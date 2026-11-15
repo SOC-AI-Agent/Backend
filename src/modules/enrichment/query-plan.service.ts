@@ -1,4 +1,5 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { readFileSync } from 'node:fs';
 
 import { CatalogService } from './catalog.service';
@@ -113,7 +114,10 @@ export interface SuggestedLookup {
 export class QueryPlanService implements OnModuleInit {
   private readonly logger = new Logger(QueryPlanService.name);
 
-  constructor(private readonly catalog: CatalogService) {}
+  constructor(
+    private readonly catalog: CatalogService,
+    @Optional() private readonly config?: ConfigService,
+  ) {}
 
   /**
    * The question table, from a file an operator edits.
@@ -336,7 +340,8 @@ export class QueryPlanService implements OnModuleInit {
     // A correlation search that has fired a thousand times this week is a
     // different alert from one firing for the first time, and the alert itself
     // cannot say which it is.
-    if (alertName.trim()) {
+    const includeFrequency = this.config?.get<boolean>('lookup.alertFrequency') ?? true;
+    if (includeFrequency && alertName.trim()) {
       // Plannable without an indicator: the backend has the name and the
       // window already. Handing those to an agent so it could pass them
       // straight through cost 109 of the 111 seconds a whole lookup takes.

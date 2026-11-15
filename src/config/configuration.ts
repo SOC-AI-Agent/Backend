@@ -219,6 +219,8 @@ export default () => ({
     analyse: toBool(process.env.SPLUNK_LOOKUP_ANALYSE, true),
     /** A cap on how many of stage 1's requirements are actually run. */
     maxRequirements: toInt(process.env.SPLUNK_LOOKUP_MAX_REQUIREMENTS, 5),
+    /** Whether to add the "how often this alert fired" frequency lookup (requires Splunk ES `notable` or a dedicated alert index). */
+    alertFrequency: toBool(process.env.SPLUNK_ALERT_FREQUENCY, true),
   },
   retention: {
     jobsDays: toInt(process.env.RETENTION_DAYS_JOBS, 30),

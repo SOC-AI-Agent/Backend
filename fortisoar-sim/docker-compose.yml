@@ -1,0 +1,37 @@
+# Standalone Compose file for the FortiSOAR Simulator.
+#
+# Run against a running SOC stack on `soc-network`:
+#   cd Backend/fortisoar-sim
+#   docker compose up -d --build
+#
+# Override backend URL or default API key:
+#   SOC_BASE_URL=http://host.docker.internal:8082 SOC_API_KEY=... docker compose up -d
+
+services:
+  soc-fortisoar-sim:
+    build: .
+    image: soc-fortisoar-sim:latest
+    container_name: soc-fortisoar-sim
+    environment:
+      SOC_BASE_URL: ${SOC_BASE_URL:-http://soc-core-api:8000}
+      SOC_API_KEY: ${SOC_API_KEY:-}
+      SOC_ALERTS_FILE: /app/alerts/lab-alerts.json
+    ports:
+      - "${SIM_HOST_PORT:-8090}:8090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    mem_limit: 128m
+    cpus: 0.25
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    networks:
+      - soc-network
+
+networks:
+  soc-network:
+    external: true
+    name: soc-network
