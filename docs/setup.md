@@ -164,6 +164,7 @@ Backend เรียก agent 3 ตัว **ถ้าขาดตัวไหน
 | `soc-suggest` | `LLM_SUGGEST_AGENT` | อ่าน alert + ข้อมูลที่ Backend เตรียมไว้ (ThreatQ, playbook) เขียน suggestion — ขาดตัวนี้ job fail |
 | `soc-requirements` | `LLM_REQUIREMENTS_AGENT` | อ่านเหมือนกัน (alert + ThreatQ + playbook) พร้อม suggestion แล้วเขียนว่าอยากถาม Splunk อะไร พร้อมรายละเอียดจาก alert ใต้แต่ละคำถาม — ขาดหรือพัง: ใช้แผนที่ Backend ได้จากตัวโค้ดแทน |
 | `soc-conclude` | `LLM_CONCLUDE_AGENT` | หลังค้น Splunk เสร็จ อ่านผลค้นคู่กับ suggestion เขียนบทวิเคราะห์ — ขาดหรือพัง: ผลค้นยังอยู่ครบ ไม่มีบทวิเคราะห์ |
+| `soc-spl-writer` (ไม่บังคับ) | `LLM_SPL_AGENT` | เขียน SPL ของแต่ละ requirement จาก prompt ที่ connector เตรียมให้ (`splunk_prompt`) แล้ว connector ตรวจ read-only และรันเอง — เว้นว่าง, ขาด, หรือ SPL ถูกปฏิเสธ: connector เขียน SPL เองเหมือนเดิม. ไม่ใช้กับ search ของ playbook (filters/summarise) และ alert frequency |
 
 การค้น Splunk ไม่ผ่าน agent: Backend ส่งแต่ละ requirement เป็นข้อความไป Text-to-SPL ของ Splunk
 ผ่าน MCP (`saia_generate_spl`) ตรวจ SPL ที่ได้ แล้วสั่งรัน (`splunk_run_query`)

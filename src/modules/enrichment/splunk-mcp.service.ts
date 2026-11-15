@@ -59,6 +59,8 @@ export interface SplunkAnswer {
   limit: number;
   /** The far end said it answered from mock data. */
   mock: boolean;
+  /** Who wrote the SPL: 'caller' (the SPL agent's draft), 'assistant' or 'template'. */
+  writtenBy?: string;
   /** The rows as an analyst reads them: what ran, how much came back, the rows. */
   answer: string;
 }
@@ -83,8 +85,14 @@ export interface SplunkDraft {
 }
 
 export interface SplunkSession {
-  /** Throws SplunkLookupError when the requirement could not be answered. */
-  ask(question: SplunkQuestion): Promise<SplunkAnswer>;
+  /**
+   * Throws SplunkLookupError when the requirement could not be answered. `written`
+   * is an agent's reply to writerPrompt, as it came: the connector finds the SPL in
+   * it, checks it and runs it instead of writing its own.
+   */
+  ask(question: SplunkQuestion, written?: string): Promise<SplunkAnswer>;
+  /** What to show an agent that writes the SPL; null when the connector has no such tool. */
+  writerPrompt(question: SplunkQuestion): Promise<string | null>;
   /** Only the first half of ask: Text-to-SPL and the guard. Nothing is searched. */
   generate(question: SplunkQuestion): Promise<SplunkDraft>;
   close(): Promise<void>;
@@ -119,7 +127,7 @@ export class SplunkMcpService {
   }
 
   async connect(): Promise<SplunkSession> {
-    const { token, timeoutMs, lookupTool, textToSplTool } = this.config.get('splunk');
+    const { token, timeoutMs, lookupTool, textToSplTool, promptTool } = this.config.get('splunk');
     const url = this.endpoint();
     const client = new Client({ name: 'soc-backend', version: '1.0.0' });
     const transport = new StreamableHTTPClientTransport(url, {
@@ -142,18 +150,24 @@ export class SplunkMcpService {
     }
 
     // The stored plan has nulls where stage 1 found nothing; the connector reads absent, not null.
-    const call = (name: string, q: SplunkQuestion) =>
+    const call = (name: string, q: SplunkQuestion, written?: string) =>
       client
         .callTool(
-          { name, arguments: { question: Object.fromEntries(Object.entries(q).filter(([, v]) => v != null)) } },
+          {
+            name,
+            arguments: {
+              question: Object.fromEntries(Object.entries(q).filter(([, v]) => v != null)),
+              ...(written != null ? { spl: written } : {}),
+            },
+          },
           undefined,
           { timeout: timeoutMs },
         )
         .then((r) => payloadOf(r, name));
 
     return {
-      ask: async (q: SplunkQuestion): Promise<SplunkAnswer> => {
-        const got = await call(lookupTool, q);
+      ask: async (q: SplunkQuestion, written?: string): Promise<SplunkAnswer> => {
+        const got = await call(lookupTool, q, written);
         if (got?.error || typeof got?.spl !== 'string') {
           throw new SplunkLookupError(got?.error ?? `${lookupTool} returned no SPL`, got?.prompt, got?.spl);
         }
@@ -167,7 +181,14 @@ export class SplunkMcpService {
           limit: got.limit ?? 0,
           mock: got.mock === true,
           answer: got.answer ?? '',
+          writtenBy: got.written_by,
         };
+      },
+      writerPrompt: async (q: SplunkQuestion): Promise<string | null> => {
+        // An older connector without the tool is not an error: it writes the SPL itself.
+        if (!tools.includes(promptTool)) return null;
+        const got = await call(promptTool, q);
+        return typeof got?.writer_prompt === 'string' ? got.writer_prompt : null;
       },
       generate: async (q: SplunkQuestion): Promise<SplunkDraft> => {
         const got = await call(textToSplTool, q);

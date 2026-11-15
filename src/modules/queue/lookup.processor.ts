@@ -8,7 +8,12 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AiService } from '../ai/ai.service';
 import { buildConclusionPrompt, parseConclusion } from '../ai/conclusion';
 import { AuditService } from '../audit/audit.service';
-import { SplunkLookupError, SplunkMcpService, SplunkSession } from '../enrichment/splunk-mcp.service';
+import {
+  SplunkAnswer,
+  SplunkLookupError,
+  SplunkMcpService,
+  SplunkSession,
+} from '../enrichment/splunk-mcp.service';
 import {
   FinalAnalysis,
   LOOKUP_QUEUE,
@@ -44,8 +49,10 @@ interface PlannedLookup {
  * the alert (device, source, user, ...), the index, sourcetype and field names the
  * catalogue resolved, and the window. The connector turns that into a prompt, has
  * Text-to-SPL write the search, checks it is read-only and inside the allowed
- * indexes, runs it, and hands back the SPL and the rows (`splunk_lookup`). No model
- * on this side is involved. They run one after another so the load on Splunk stays small and
+ * indexes, runs it, and hands back the SPL and the rows (`splunk_lookup`). With
+ * LLM_SPL_AGENT set, that agent writes the SPL from the connector's writer prompt
+ * (`splunk_prompt`) and the connector checks and runs it the same way; a draft
+ * that fails falls back to the connector's own. They run one after another so the load on Splunk stays small and
  * the progress is visible.
  *
  * Then, once the searches are in, a third agent reads them beside the suggestion
@@ -137,6 +144,10 @@ export class LookupProcessor extends WorkerHost {
       this.logger.error(`Lookup for ${jobId}: ${connectError}`);
     }
 
+    // The SPL agent drafts every search up front and at once: they are short calls
+    // that do not touch Splunk, so only the searches themselves queue up below.
+    const drafts = await this.draftAll(jobId, session, requirements);
+
     for (const [n, plan] of requirements.entries()) {
       const each = Date.now();
       this.logger.log(
@@ -146,14 +157,33 @@ export class LookupProcessor extends WorkerHost {
 
       try {
         if (!session) throw new Error(connectError);
-        const asked = await session.ask(plan);
+        const draft = drafts[n];
+        let asked: SplunkAnswer | undefined;
+        let draftError = draft?.error;
+        if (draft?.reply) {
+          try {
+            asked = await session.ask(plan, draft.reply);
+          } catch (err: any) {
+            // No SPL in the reply, refused by the guard, or rejected by Splunk: the
+            // connector's own search is the floor, so a bad draft costs one retry.
+            draftError = err?.message ?? String(err);
+            this.logger.warn(
+              `Lookup for ${jobId}: the SPL agent's search for "${plan.requirement.slice(0, 60)}" ` +
+                `was dropped (${draftError}) — the connector writes it instead`,
+            );
+          }
+        }
+        const byAgent = asked !== undefined;
+        asked ??= await session.ask(plan);
         answers.push({
           requirement: plan.requirement,
           answer: asked.answer,
-          runId: null,
-          durationMs: Date.now() - each,
+          runId: byAgent ? draft?.runId ?? null : null,
+          durationMs: Date.now() - each + (draft?.durationMs ?? 0),
           error: null,
           ranBy: 'splunk',
+          writtenBy: byAgent ? 'agent' : asked.writtenBy,
+          ...(!byAgent && draftError ? { draftError } : {}),
           prompt: asked.prompt,
           spl: asked.spl,
           count: asked.count,
@@ -244,6 +274,44 @@ export class LookupProcessor extends WorkerHost {
       `Lookup for ${jobId}: ${answers.length - failed}/${answers.length} answered in ` +
         `${(searchMs / 1000).toFixed(1)}s` +
         (analysis ? `, analysis ${analysis.status} (${((elapsedMs - searchMs) / 1000).toFixed(1)}s)` : ''),
+    );
+  }
+
+  /**
+   * The SPL agent's reply for each requirement, in order; undefined where it was
+   * not asked. Never throws — a requirement without a draft is written by the
+   * connector, as all of them are when LLM_SPL_AGENT is unset.
+   *
+   * Not asked: a playbook's own search (filters, summarise) and the alert-frequency
+   * count. Those arrive as structure the connector's template turns into SPL
+   * exactly; a model can only match that or get it wrong.
+   */
+  private async draftAll(
+    jobId: string,
+    session: SplunkSession | undefined,
+    plans: PlannedLookup[],
+  ): Promise<Array<{ reply?: string; runId?: string | null; error?: string; durationMs: number } | undefined>> {
+    const agent = this.config.get<string>('ai.splAgent');
+    if (!agent || !session) return plans.map(() => undefined);
+
+    return Promise.all(
+      plans.map(async (plan) => {
+        if (plan.filters || plan.summarise || plan.frequencyOf) return undefined;
+        const began = Date.now();
+        try {
+          const prompt = await session.writerPrompt(plan);
+          if (!prompt) return undefined;
+          const run = await this.ai.generate(prompt, { agent });
+          return { reply: run.response, runId: run.run_id ?? null, durationMs: Date.now() - began };
+        } catch (err: any) {
+          const error = err?.message ?? String(err);
+          this.logger.warn(
+            `Lookup for ${jobId}: the SPL agent failed for "${plan.requirement.slice(0, 60)}" ` +
+              `(${error}) — the connector writes it instead`,
+          );
+          return { error, durationMs: Date.now() - began };
+        }
+      }),
     );
   }
 

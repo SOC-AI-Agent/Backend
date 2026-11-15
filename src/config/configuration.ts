@@ -116,6 +116,12 @@ export default () => ({
     /** Stage 3: reads the suggestion and the Splunk results, writes the second reading. */
     concludeAgent: process.env.LLM_CONCLUDE_AGENT ?? 'soc-conclude',
     /**
+     * Stage 2, optional: writes the SPL for a requirement from the connector's
+     * writer prompt. Empty = the connector writes it itself (Text-to-SPL or its
+     * template), which is also what a failed or refused draft falls back to.
+     */
+    splAgent: (process.env.LLM_SPL_AGENT ?? '').trim(),
+    /**
      * Bearer token soc-ai requires on every route but /health. Must match
      * AI_SERVICE_AUTH_TOKEN in AI-Service/.env byte for byte.
      */
@@ -191,6 +197,8 @@ export default () => ({
     /** The connector's tools: a whole lookup, and Text-to-SPL alone. */
     lookupTool: process.env.SPLUNK_MCP_LOOKUP_TOOL ?? 'splunk_lookup',
     textToSplTool: process.env.SPLUNK_MCP_TEXT_TO_SPL_TOOL ?? 'splunk_text_to_spl',
+    /** What to show an agent that writes the SPL. Only called when LLM_SPL_AGENT is set. */
+    promptTool: process.env.SPLUNK_MCP_PROMPT_TOOL ?? 'splunk_prompt',
     // One MCP tool call, which is Text-to-SPL and the search together. Splunk AI
     // Assistant takes tens of seconds; Splunk's own guardrail stops a search at
     // one minute.

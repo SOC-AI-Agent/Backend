@@ -168,6 +168,11 @@ fi
 LLM_MODELS_VAL="${LLM_MODELS_VAL:-$DEFAULT_OPENROUTER_MODELS}"
 PRIMARY_MODEL="${LLM_MODELS_VAL%%,*}"
 
+# The agent that writes the SPL (stage 2) and the model it is created with.
+# LLM_SPL_AGENT= (empty) turns it off: the Splunk connector writes the SPL itself.
+SPL_AGENT_VAL="${LLM_SPL_AGENT-soc-spl-writer}"
+SPL_MODEL_VAL="${LLM_SPL_MODEL:-google/gemini-2.5-flash}"
+
 MCP_TOKEN="$(kept "$REPOS/Backend/.env" MCP_AUTH_TOKEN)"
 MCP_TOKEN="${MCP_TOKEN:-$(gen_hex)}"
 
@@ -209,12 +214,14 @@ JWT_SECRET_KEY="$JWT_SECRET_KEY_VAL" \
 THREATQ_BASE_URL="" \
 SPLUNK_LOOKUP_MODE="${SPLUNK_LOOKUP_MODE:-manual}" \
 SPLUNK_ALERT_FREQUENCY="false" \
+LLM_SPL_AGENT="$SPL_AGENT_VAL" \
 OLLAMA_MODEL="$PRIMARY_MODEL" \
 ALLOWED_ORIGINS="http://${VPS_HOST}:3002,http://localhost:3002,http://soc-frontend" \
   write_env Backend \
     "AI_SERVICE_AUTH_TOKEN=$AI_TOKEN" \
     "MCP_AUTH_TOKEN=$MCP_TOKEN" \
     "SPLUNK_ALERT_FREQUENCY=false" \
+    "LLM_SPL_AGENT=$SPL_AGENT_VAL" \
     "ALLOWED_ORIGINS=http://${VPS_HOST}:3002,http://localhost:3002,http://soc-frontend"
 
 # AI-Service/.env
@@ -308,6 +315,8 @@ echo "    Registering models ($LLM_MODELS_VAL) & creating SOC agents..."
 AGENT_ADMIN_PASSWORD="$AGENT_ADMIN_PASS" \
 LLM_MODELS_LIST="$LLM_MODELS_VAL" \
 LLM_PROVIDER_VAL="$LLM_PROVIDER_VAL" \
+SPL_AGENT_VAL="$SPL_AGENT_VAL" \
+SPL_MODEL_VAL="$SPL_MODEL_VAL" \
 python3 - <<'PY'
 import json
 import os
@@ -354,7 +363,20 @@ for m in raw_models:
     print(f"    [+] model ready: {res['model_name']} ({res['provider']})")
 
 default_model_id = registered[0]["id"]
-existing = {a["slug"] for a in req("GET", "/restful/agents", token=token)}
+
+# The SPL writer gets its own model, registered if LLM_MODELS did not list it.
+spl_slug = os.environ.get("SPL_AGENT_VAL", "").strip()
+spl_model_name = os.environ.get("SPL_MODEL_VAL", "").strip()
+spl_model = next((r for r in registered if r["model_name"] == spl_model_name), None)
+if spl_slug and spl_model_name and spl_model is None:
+    spl_model = req("POST", "/restful/models", {
+        "name": spl_model_name,
+        "model_name": spl_model_name,
+        "provider": provider,
+        "is_active": True,
+    }, token=token)
+    print(f"    [+] model ready: {spl_model['model_name']} ({spl_model['provider']}) — SPL writer")
+existing_by_slug = {a["slug"]: a for a in req("GET", "/restful/agents", token=token)}
 
 AGENTS = [
     {
@@ -367,7 +389,7 @@ AGENTS = [
             "assessment: likely cause, severity, affected entities, recommended containment/next "
             "steps, and explicitly state what remains unverified."
         ),
-        "config": {"temperature": 0.2, "max_tokens": 1024, "context_window": 8192, "streaming_enabled": True},
+        "config": {"temperature": 0.2, "max_tokens": 1536, "context_window": 8192, "streaming_enabled": True},
     },
     {
         "slug": "soc-requirements",
@@ -378,16 +400,19 @@ AGENTS = [
             "intelligence (ThreatQ) results and the playbook for it — and the first-pass "
             "suggestion already written, and decide what still has to be asked of Splunk to "
             "confirm or rule out that suggestion.\n\n"
-            "Ask only what the alert and the suggestion leave open. Each question names one "
-            "value from the alert (an address, a user, a host, a hash or a domain) and says "
-            "what to find out about it.\n\n"
-            "Under each question, list the details from the alert that tell Splunk which data "
-            "the question is about — device, source, destination, domain, user, user_agent, "
-            "type, action, signature — copied exactly as they appear in the alert. Never "
-            "invent a value, and leave out a detail the alert does not have.\n\n"
+            "Rules:\n"
+            "1. Ask only distinct questions that pivot on different extracted indicators or "
+            "different aspects of the alert. Never write two questions about the same indicator "
+            "that would run the same search.\n"
+            "2. Each question must name the exact indicator value from the alert (an IP address, "
+            "a username, a hostname, a hash, a URL/URI path, a process/service name, or a domain).\n"
+            "3. Under each question, list only the `key: value` details from the alert needed to "
+            "scope that specific search (e.g. `source`, `user`, `device`, `url`, `process`, `hash`). "
+            "Copy each value verbatim as a single value from the alert.\n"
+            "4. Never write `-`, `none`, `N/A`, or multi-field labels, and never invent a value.\n\n"
             "Answer in the ANSWER FORMAT given at the end of the message, and nothing else."
         ),
-        "config": {"temperature": 0.1, "max_tokens": 512, "context_window": 8192, "streaming_enabled": True},
+        "config": {"temperature": 0.1, "max_tokens": 2048, "context_window": 8192, "streaming_enabled": True},
     },
     {
         "slug": "soc-conclude",
@@ -399,26 +424,59 @@ AGENTS = [
             "with [splunk N], state clearly whether the alert looks like a true positive, "
             "false positive, or inconclusive, and note any failed or empty searches."
         ),
-        "config": {"temperature": 0.2, "max_tokens": 1024, "context_window": 8192, "streaming_enabled": True},
+        "config": {"temperature": 0.2, "max_tokens": 1536, "context_window": 8192, "streaming_enabled": True},
     },
 ]
 
+if spl_slug:
+    AGENTS.append({
+        "slug": spl_slug,
+        "name": spl_slug,
+        "description": "Stage 2 SPL writer: one read-only Splunk search per requirement",
+        # Short on purpose: the request and the ANSWER FORMAT arrive in every message
+        # (the connector's splunk_prompt), so the rules live in one place.
+        "system_prompt": (
+            "You write Splunk SPL for a SOC. Each message is one search request followed by an "
+            "ANSWER FORMAT. Reply with exactly one ```spl code block holding one search, and "
+            "nothing else — no explanation, no alternatives.\n\n"
+            "Use only the index, sourcetype, field names, values and time range the request "
+            "gives. Never invent a field name or a value. Copy values verbatim."
+        ),
+        # Deterministic and short: a search is one line. The headroom over ~150 tokens
+        # is for a model that spends some on reasoning before it answers.
+        "config": {"temperature": 0, "max_tokens": 1024, "context_window": 4096, "streaming_enabled": False},
+        "model_id": spl_model["id"] if spl_model else default_model_id,
+    })
+
 for spec in AGENTS:
-    if spec["slug"] in existing:
-        print(f"    [=] agent exists: {spec['slug']}")
+    if spec["slug"] in existing_by_slug:
+        agent_id = existing_by_slug[spec["slug"]]["id"]
+        req(
+            "PUT",
+            f"/restful/agents/{agent_id}",
+            {
+                "description": spec["description"],
+                "system_prompt": spec["system_prompt"],
+                "config": spec["config"],
+                "is_active": True,
+            },
+            token=token,
+        )
+        print(f"    [~] agent updated: {spec['slug']}")
         continue
     payload = {
         "slug": spec["slug"],
         "name": spec["name"],
         "description": spec["description"],
         "owner_id": owner_id,
-        "model_id": default_model_id,
+        "model_id": spec.get("model_id", default_model_id),
         "is_active": True,
         "system_prompt": spec["system_prompt"],
         "config": spec["config"],
     }
     req("POST", "/restful/agents", payload, token=token)
-    print(f"    [+] agent created: {spec['slug']} (model={registered[0]['model_name']})")
+    made_with = spl_model["model_name"] if spec.get("model_id") and spl_model else registered[0]["model_name"]
+    print(f"    [+] agent created: {spec['slug']} (model={made_with})")
 PY
 
 # ── 4. Splunk Enterprise container + live token + sample data ───────────────
@@ -428,6 +486,8 @@ echo "==> [4/6] Starting Splunk Enterprise container (soc-splunk)"
   docker compose -f docker-compose.yml -f "$HERE/deploy/vps-splunk.override.yml" up -d
   echo "    Waiting for Splunk management API & creating soc-mcp user/token + sample events..."
   python3 setup.py --write-env --wait 600
+  echo "    Loading lab raw logs (Apache, Sysmon, Windows Event Logs) into index=main..."
+  python3 load_raw_logs.py
 )
 
 # ── 5. SOC Core stack (DB, Redis, AI-Service, MCP-Splunk, Backend, Frontend) ─

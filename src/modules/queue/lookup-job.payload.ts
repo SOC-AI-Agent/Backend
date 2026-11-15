@@ -39,6 +39,14 @@ export interface LookupAnswer {
    * stay in the type and the dashboard still reads them.
    */
   ranBy?: 'splunk' | 'backend' | 'agent';
+  /**
+   * Who wrote the SPL that ran: 'agent' (the SPL agent, LLM_SPL_AGENT — runId is
+   * its run), else the connector itself ('assistant' or 'template'). Absent on
+   * older jobs.
+   */
+  writtenBy?: string;
+  /** Why the SPL agent's draft was not the one that ran, when it was tried and dropped. */
+  draftError?: string;
   /** The text sent to Text-to-SPL: the requirement, plus where and when to look. */
   prompt?: string;
   /**
