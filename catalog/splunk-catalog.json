@@ -17,8 +17,71 @@
 
   "indexes": {
     "main": {
-      "purpose": "FortiGate firewall logs — perimeter traffic and UTM detections",
+      "purpose": "The lab estate. FortiGate sample events (recent), and one Windows web server, KBTG-Bootcamp, on 24 Dec 2024 16:43-17:58 UTC: its Apache access log, Sysmon and Windows event logs. Those three hold nothing outside that hour — a search must reach back to it.",
       "sourcetypes": {
+        "access_combined": {
+          "purpose": "Apache access log of the web server. One line per HTTP request.",
+          "roles": {
+            "src_ip": "clientip",
+            "action": "status"
+          },
+          "fields": [
+            "clientip", "method", "uri", "uri_path", "uri_query", "file",
+            "status", "bytes", "referer", "useragent", "version"
+          ],
+          "notes": [
+            "`clientip` is who made the request. There is no destination field: every event is the one web server.",
+            "`status` is the HTTP response code, the only outcome here: 200 served, 403 refused, 404 not there. There is no `action`.",
+            "`user` and `ident` are always `-`, and `host` is a label put on at load, not the server's name. Search neither.",
+            "Over a million requests in four minutes, nearly all 404 or 403. Count by `status` or `useragent`; to see what worked, exclude 404 and 403."
+          ]
+        },
+        "sysmon": {
+          "purpose": "Sysmon on KBTG-Bootcamp. Process creation (EventCode 1) mostly; also file create (11), registry set (13), named pipes (17, 18).",
+          "roles": {
+            "user": "User",
+            "host": "Computer",
+            "hash": "SHA256"
+          },
+          "fields": [
+            "EventCode", "Computer", "User", "Image", "CommandLine", "CurrentDirectory",
+            "ParentImage", "ParentCommandLine", "ParentUser", "OriginalFileName",
+            "Hashes", "SHA256", "IntegrityLevel", "ProcessId", "ParentProcessId",
+            "ProcessGuid", "ParentProcessGuid", "LogonId", "TargetFilename",
+            "TargetObject", "Details", "PipeName", "RuleName", "UtcTime"
+          ],
+          "notes": [
+            "No network events (EventCode 3) were collected: there is no IP address in this sourcetype. An address is in access_combined or wineventlog.",
+            "`User` is DOMAIN\\name, e.g. `NT AUTHORITY\\SYSTEM`; match a bare account name with a wildcard: User=\"*\\\\name\".",
+            "`SHA256` is the bare hash. An MD5 or IMPHASH is only inside `Hashes` (MD5=...,SHA256=...,IMPHASH=...): Hashes=\"*value*\". No SHA1.",
+            "Write each backslash of a value twice inside quotes: Image=\"C:\\\\Windows\\\\name.exe\". Written once, it matches nothing.",
+            "Follow a process to its children with ParentImage or ParentProcessGuid, not ProcessId, which is reused.",
+            "Most events are the Splunk forwarder's own helpers (Image under SplunkUniversalForwarder). Exclude them to see the rest."
+          ]
+        },
+        "wineventlog": {
+          "purpose": "Windows Security, System and Application event logs of KBTG-Bootcamp: logons (4624, 4634, 4672, 4776), services (7036, 7045).",
+          "roles": {
+            "src_ip": "Source_Network_Address",
+            "src_port": "Source_Port",
+            "user": "Account_Name",
+            "host": "ComputerName"
+          },
+          "fields": [
+            "EventCode", "LogName", "ComputerName", "Account_Name", "Account_Domain",
+            "Logon_Account", "Logon_Type", "Logon_ID", "Logon_Process", "Authentication_Package",
+            "Source_Network_Address", "Source_Port", "Workstation_Name", "Process_Name",
+            "Security_ID", "Privileges", "Error_Code", "Service_Name", "Service_File_Name",
+            "Service_Type", "Service_Start_Type", "Service_Account", "TaskCategory", "Keywords", "Message"
+          ],
+          "notes": [
+            "`Account_Name` has two values in a 4624: who asked for the logon, then who logged on. A 4776 names the account in `Logon_Account` instead.",
+            "`Source_Network_Address` is `-` for a local logon. Logon_Type 3 is over the network, 5 is a service.",
+            "`ComputerName` is the machine that wrote the event; `Workstation_Name` is the remote client and is often empty.",
+            "A new service is EventCode 7045: `Service_Name` and `Service_File_Name`. 7036 is only a service changing state.",
+            "Field names are the labels in the message with spaces as underscores. EventID, src_ip and dest do not exist here."
+          ]
+        },
         "fortigate": {
           "purpose": "FortiGate traffic and UTM events. One line per session or detection.",
           "roles": {

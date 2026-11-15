@@ -1,0 +1,51 @@
+[
+  {
+    "alert_id": "FSR-LAB-001",
+    "alert_name": "Web directory brute-force scan detected (feroxbuster)",
+    "raw_log": "192.168.56.129 - - [24/Dec/2024:08:47:37 -0800] \"GET /zzstyles.jsp HTTP/1.1\" 404 300 \"-\" \"feroxbuster/2.11.0\"",
+    "indicators": [
+      { "type": "ip", "value": "192.168.56.129", "source": "src_ip" },
+      { "type": "url", "value": "/zzstyles.jsp", "source": "uri_path" }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-002",
+    "alert_name": "Possible web shell upload and command execution on web server",
+    "raw_log": "192.168.56.129 - - [24/Dec/2024:08:44:15 -0800] \"GET /uploads/php-webshell.php?cmd=whoami HTTP/1.1\" 200 26 \"-\" \"Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0\"",
+    "indicators": [
+      { "type": "ip", "value": "192.168.56.129", "source": "src_ip" },
+      { "type": "url", "value": "/uploads/php-webshell.php?cmd=whoami", "source": "uri" }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-003",
+    "alert_name": "Suspicious Windows service installed on endpoint (EventCode 7045)",
+    "raw_log": "12/24/2024 09:01:41 AM\nLogName=System\nEventCode=7045\nEventType=4\nComputerName=KBTG-Bootcamp\nUser=NOT_TRANSLATED\nSid=S-1-5-21-1826897636-2806653855-114302692-1000\nSidType=0\nSourceName=Microsoft-Windows-Service Control Manager\nType=Information\nRecordNumber=3768\nKeywords=Classic\nTaskCategory=None\nOpCode=The operation completed successfully.\nMessage=A service was installed in the system.\n\nService Name:  jQTS\nService File Name:  %systemroot%\\PKSnPlKq.exe\nService Type:  user mode service\nService Start Type:  demand start\nService Account:  LocalSystem",
+    "indicators": [
+      { "type": "host", "value": "KBTG-Bootcamp", "source": "ComputerName" },
+      { "type": "service", "value": "jQTS", "source": "ServiceName" },
+      { "type": "process", "value": "PKSnPlKq.exe", "source": "ServiceFileName" }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-004",
+    "alert_name": "Command shell (cmd.exe) spawned by PKSnPlKq.exe as SYSTEM (Sysmon EventID 1)",
+    "raw_log": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Sysmon' Guid='{5770385f-c22a-43e0-bf4c-06f5698ffbd9}'/><EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords><TimeCreated SystemTime='2024-12-24T17:01:41.1280062Z'/><EventRecordID>44883</EventRecordID><Correlation/><Execution ProcessID='4600' ThreadID='1452'/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>KBTG-Bootcamp</Computer><Security UserID='S-1-5-18'/></System><EventData><Data Name='RuleName'>-</Data><Data Name='UtcTime'>2024-12-24 17:01:41.124</Data><Data Name='ProcessGuid'>{679a8f89-e8f5-676a-3807-000000000c00}</Data><Data Name='ProcessId'>1208</Data><Data Name='Image'>C:\\Windows\\SysWOW64\\cmd.exe</Data><Data Name='FileVersion'>10.0.20348.2849 (WinBuild.160101.0800)</Data><Data Name='Description'>Windows Command Processor</Data><Data Name='Product'>Microsoft® Windows® Operating System</Data><Data Name='Company'>Microsoft Corporation</Data><Data Name='OriginalFileName'>Cmd.Exe</Data><Data Name='CommandLine'>cmd.exe</Data><Data Name='CurrentDirectory'>C:\\Windows\\system32\\</Data><Data Name='User'>NT AUTHORITY\\SYSTEM</Data><Data Name='LogonGuid'>{679a8f89-83c2-676a-e703-000000000000}</Data><Data Name='LogonId'>0x3e7</Data><Data Name='TerminalSessionId'>0</Data><Data Name='IntegrityLevel'>System</Data><Data Name='Hashes'>MD5=A7735F9E67DAC28F91F4925B04C3D1E2,SHA256=07D4A98BB28273881DB3F9841EF3A3484D5EDF8AD43F64085C1C6CA1F8C41DC9,IMPHASH=63B6D640EF299E8F8898CEA09B8AA342</Data><Data Name='ParentProcessGuid'>{679a8f89-e8f5-676a-3707-000000000c00}</Data><Data Name='ParentProcessId'>6216</Data><Data Name='ParentImage'>C:\\Windows\\PKSnPlKq.exe</Data><Data Name='ParentCommandLine'>C:\\Windows\\PKSnPlKq.exe</Data><Data Name='ParentUser'>NT AUTHORITY\\SYSTEM</Data></EventData></Event>",
+    "indicators": [
+      { "type": "host", "value": "KBTG-Bootcamp", "source": "Computer" },
+      { "type": "process", "value": "C:\\Windows\\PKSnPlKq.exe", "source": "ParentImage" },
+      { "type": "hash", "value": "07D4A98BB28273881DB3F9841EF3A3484D5EDF8AD43F64085C1C6CA1F8C41DC9", "source": "Hashes" }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-005",
+    "alert_name": "Successful NTLM network logon (Logon Type 3) from external source IP",
+    "raw_log": "12/24/2024 09:04:26 AM\nLogName=Security\nEventCode=4624\nEventType=0\nComputerName=KBTG-Bootcamp\nSourceName=Microsoft Windows security auditing.\nType=Information\nRecordNumber=16142\nKeywords=Audit Success\nTaskCategory=Logon\nOpCode=Info\nMessage=An account was successfully logged on.\n\nSubject:\n\tSecurity ID:\t\tS-1-0-0\n\tAccount Name:\t\t-\n\tAccount Domain:\t\t-\n\tLogon ID:\t\t0x0\n\nLogon Information:\n\tLogon Type:\t\t3\n\tRestricted Admin Mode:\t-\n\tVirtual Account:\t\tNo\n\tElevated Token:\t\tYes\n\nImpersonation Level:\t\tImpersonation\n\nNew Logon:\n\tSecurity ID:\t\tS-1-5-21-1826897636-2806653855-114302692-1000\n\tAccount Name:\t\tvanitas\n\tAccount Domain:\t\tKBTG-BOOTCAMP\n\tLogon ID:\t\t0x55C21E7\n\tLinked Logon ID:\t\t0x0\n\tNetwork Account Name:\t-\n\tNetwork Account Domain:\t-\n\tLogon GUID:\t\t{00000000-0000-0000-0000-000000000000}\n\nProcess Information:\n\tProcess ID:\t\t0x0\n\tProcess Name:\t\t-\n\nNetwork Information:\n\tWorkstation Name:\t-\n\tSource Network Address:\t192.168.56.129\n\tSource Port:\t\t36848\n\nDetailed Authentication Information:\n\tLogon Process:\t\tNtLmSsp \n\tAuthentication Package:\tNTLM\n\tTransited Services:\t-\n\tPackage Name (NTLM only):\tNTLM V2\n\tKey Length:\t\t0",
+    "indicators": [
+      { "type": "ip", "value": "192.168.56.129", "source": "SourceNetworkAddress" },
+      { "type": "user", "value": "vanitas", "source": "AccountName" },
+      { "type": "host", "value": "KBTG-Bootcamp", "source": "ComputerName" }
+    ]
+  }
+]
+
