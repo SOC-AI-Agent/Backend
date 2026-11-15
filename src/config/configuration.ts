@@ -116,11 +116,12 @@ export default () => ({
     /** Stage 3: reads the suggestion and the Splunk results, writes the second reading. */
     concludeAgent: process.env.LLM_CONCLUDE_AGENT ?? 'soc-conclude',
     /**
-     * Stage 2, optional: writes the SPL for a requirement from the connector's
-     * writer prompt. Empty = the connector writes it itself (Text-to-SPL or its
-     * template), which is also what a failed or refused draft falls back to.
+     * Stage 2: writes the SPL for a requirement from the connector's writer
+     * prompt. Always on — `soc-spl-writer` is built into Agent-Server (DALL-M),
+     * which creates it itself, so the slug is fixed rather than configured. A
+     * failed or refused draft falls back to the connector's own SPL.
      */
-    splAgent: (process.env.LLM_SPL_AGENT ?? '').trim(),
+    splAgent: (process.env.LLM_SPL_AGENT ?? '').trim() || 'soc-spl-writer',
     /**
      * Bearer token soc-ai requires on every route but /health. Must match
      * AI_SERVICE_AUTH_TOKEN in AI-Service/.env byte for byte.

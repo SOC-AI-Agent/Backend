@@ -183,6 +183,7 @@ export class LookupProcessor extends WorkerHost {
           error: null,
           ranBy: 'splunk',
           writtenBy: byAgent ? 'agent' : asked.writtenBy,
+          ...(draft ? { splAgent: this.config.get<string>('ai.splAgent') } : {}),
           ...(!byAgent && draftError ? { draftError } : {}),
           prompt: asked.prompt,
           spl: asked.spl,

@@ -138,6 +138,18 @@ export class LookupAnswerResponse {
   @ApiPropertyOptional({ enum: ['splunk', 'backend', 'agent'] })
   ranBy?: string;
 
+  /** Who wrote the SPL that ran: `agent` (the SPL agent, see splAgent), `assistant` or `template` (the connector). */
+  @ApiPropertyOptional()
+  writtenBy?: string;
+
+  /** The SPL agent asked for this one, e.g. `soc-spl-writer`, whether or not its draft ran. */
+  @ApiPropertyOptional()
+  splAgent?: string;
+
+  /** Why the SPL agent's draft was dropped and the connector's search ran instead. */
+  @ApiPropertyOptional()
+  draftError?: string;
+
   /** The text sent to Text-to-SPL: the requirement, plus where and when to look. */
   @ApiPropertyOptional()
   prompt?: string;

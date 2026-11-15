@@ -40,11 +40,13 @@ export interface LookupAnswer {
    */
   ranBy?: 'splunk' | 'backend' | 'agent';
   /**
-   * Who wrote the SPL that ran: 'agent' (the SPL agent, LLM_SPL_AGENT — runId is
-   * its run), else the connector itself ('assistant' or 'template'). Absent on
+   * Who wrote the SPL that ran: 'agent' (the SPL agent — splAgent is its slug
+   * and runId its run), else the connector itself ('assistant' or 'template'). Absent on
    * older jobs.
    */
   writtenBy?: string;
+  /** The SPL agent that was asked for this one, whether or not its draft ran. */
+  splAgent?: string;
   /** Why the SPL agent's draft was not the one that ran, when it was tried and dropped. */
   draftError?: string;
   /** The text sent to Text-to-SPL: the requirement, plus where and when to look. */
