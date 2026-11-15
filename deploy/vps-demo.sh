@@ -448,7 +448,7 @@ Web URLs:
   Backend Swagger  : http://${VPS_HOST}:8082/docs
   Agent-Server UI  : http://${VPS_HOST}:7100
                      login: admin / ${AGENT_ADMIN_PASS}
-  Splunk Web UI    : http://127.0.0.1:8000 (SSH tunnel recommended)
+  Splunk Web UI    : http://${VPS_HOST}:8000
                      login: admin / ${SPLUNK_ADMIN_PASS}
 
 Next steps:
@@ -464,11 +464,11 @@ Next steps:
        docker compose -f deploy/vps-demo.yml --project-directory . --env-file .env up -d soc-core-api soc-core-worker
        docker compose -f deploy/vps-demo.yml --project-directory . --env-file .env exec -T soc-core-worker node dist/scripts/confluence-check.js
 
-  2) Firewall (UFW) — DO NOT leave Agent-Server (:8001) open to the public internet:
+  2) Firewall (UFW) — DO NOT leave Agent-Server (:8001) or Splunk (:8000) open to the public internet without IP allowlist:
        sudo ufw allow OpenSSH
        sudo ufw allow 3002/tcp
-       # Allow 7100/8001/8082 only from your demo IP (recommended):
-       # sudo ufw allow from <YOUR_IP> to any port 7100,8001,8082 proto tcp
+       # Allow 7100/8000/8001/8082 only from your IP (recommended):
+       # sudo ufw allow from <YOUR_IP> to any port 7100,8000,8001,8082 proto tcp
        sudo ufw enable
 ====================================================================
 EOF
