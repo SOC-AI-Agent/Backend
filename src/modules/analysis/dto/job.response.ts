@@ -165,6 +165,14 @@ export class LookupAnswerResponse {
   /** Rows or events returned. */
   @ApiPropertyOptional()
   count?: number;
+
+  /** The rows, as returned (no `_raw`), for the table and charts. Absent on older jobs. */
+  @ApiPropertyOptional({ type: 'array', items: { type: 'object' } })
+  rows?: Array<Record<string, unknown>>;
+
+  /** The rows stopped at the connector's limit; there may be more. */
+  @ApiPropertyOptional()
+  capped?: boolean;
 }
 
 /**

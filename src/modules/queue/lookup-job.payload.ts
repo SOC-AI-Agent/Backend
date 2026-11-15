@@ -62,6 +62,14 @@ export interface LookupAnswer {
    */
   spl?: string;
   count?: number;
+  /**
+   * The rows themselves, as the connector trimmed them, without `_raw` (the
+   * `answer` text keeps the readable form). What the dashboard tabulates and
+   * charts. Absent on jobs from before they were kept.
+   */
+  rows?: Array<Record<string, unknown>>;
+  /** The rows stopped at the connector's limit; there may be more in Splunk. */
+  capped?: boolean;
 }
 
 /**

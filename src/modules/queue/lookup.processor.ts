@@ -188,6 +188,8 @@ export class LookupProcessor extends WorkerHost {
           prompt: asked.prompt,
           spl: asked.spl,
           count: asked.count,
+          rows: asked.rows.map(({ _raw, ...rest }) => rest),
+          capped: asked.capped,
           ...where,
         });
       } catch (err: any) {
