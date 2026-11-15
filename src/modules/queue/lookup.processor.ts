@@ -8,7 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AiService } from '../ai/ai.service';
 import { buildConclusionPrompt, parseConclusion } from '../ai/conclusion';
 import { AuditService } from '../audit/audit.service';
-import { SplunkMcpService, SplunkSession } from '../enrichment/splunk-mcp.service';
+import { SplunkLookupError, SplunkMcpService, SplunkSession } from '../enrichment/splunk-mcp.service';
 import {
   FinalAnalysis,
   LOOKUP_QUEUE,
@@ -39,13 +39,13 @@ interface PlannedLookup {
 /**
  * Stage 2: ask Splunk the requirements stage 1 wrote down.
  *
- * Each requirement goes to Splunk as text, over MCP: Splunk's Text-to-SPL writes the
- * search (saia_generate_spl), the backend checks it is read-only and inside the
- * allowed indexes, and Splunk runs it (splunk_run_query). The details the
- * requirements agent listed from the alert (device, source, user, ...), the index,
- * sourcetype and field names the catalogue resolved, and the window ride along in
- * the request (SplunkMcpService.promptFor). No model on this
- * side is involved. They run one after another so the load on Splunk stays small and
+ * Each requirement goes to the Splunk connector (MCP-Server/Splunk) over MCP, as
+ * stage 1 stored it: the question, the details the requirements agent listed from
+ * the alert (device, source, user, ...), the index, sourcetype and field names the
+ * catalogue resolved, and the window. The connector turns that into a prompt, has
+ * Text-to-SPL write the search, checks it is read-only and inside the allowed
+ * indexes, runs it, and hands back the SPL and the rows (`splunk_lookup`). No model
+ * on this side is involved. They run one after another so the load on Splunk stays small and
  * the progress is visible.
  *
  * Then, once the searches are in, a third agent reads them beside the suggestion
@@ -149,7 +149,7 @@ export class LookupProcessor extends WorkerHost {
         const asked = await session.ask(plan);
         answers.push({
           requirement: plan.requirement,
-          answer: this.splunk.render(asked),
+          answer: asked.answer,
           runId: null,
           durationMs: Date.now() - each,
           error: null,
@@ -171,7 +171,9 @@ export class LookupProcessor extends WorkerHost {
           durationMs: Date.now() - each,
           error: message,
           ranBy: 'splunk',
-          prompt: this.splunk.promptFor(plan).prompt,
+          // The connector builds the prompt; it says what it had when it got that far.
+          ...(err instanceof SplunkLookupError && err.prompt ? { prompt: err.prompt } : {}),
+          ...(err instanceof SplunkLookupError && err.spl ? { spl: err.spl } : {}),
           ...where,
         });
       }

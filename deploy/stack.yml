@@ -99,7 +99,7 @@ services:
     restart: unless-stopped
     networks: [soc-network]
 
-  # ── Splunk MCP mock (optional, development only) ─────────────────────────
+  # ── Splunk connector, mock (optional, development only) ──────────────────
   # Off unless asked for, so nothing here reads MCP-Server/ without it:
   #
   #   docker compose -f deploy/stack.yml --project-directory . --profile mock-splunk up -d --build
@@ -108,9 +108,11 @@ services:
   # answers stage 2 from made-up events. Its token is MCP_AUTH_TOKEN from
   # Backend/.env (read through --project-directory .), so it needs no
   # MCP-Server/.env and cannot drift from what the backend sends. A real Splunk
-  # needs none of this: point SPLUNK_MCP_URL at its MCP Server app
-  # (docs/splunk-mcp.md). ThreatQ and Confluence have no service here: the
-  # backend calls them directly.
+  # goes through the same connector in live mode: leave the profile off and
+  # bring it up from the MCP-Server repo with its own compose and .env, which
+  # hold Splunk's URL and token (MCP-Server/README.md; a Splunk container to
+  # try it on is in MCP-Server/external/splunk). ThreatQ and Confluence have
+  # no service here: the backend calls them directly.
   soc-mcp-splunk:
     profiles: [mock-splunk]
     build: ${REPOS:-..}/MCP-Server/Splunk

@@ -69,22 +69,27 @@ GET {AI_SERVICE_URL}/health  (no token)
 
 ## Splunk over MCP
 
-Stage 2 asks Splunk over MCP, and the worker is the MCP client: each requirement
-goes as text to `saia_generate_spl` (Splunk AI Assistant's Text-to-SPL), the SPL
-that comes back is checked by `spl-guard`, and `splunk_run_query` runs it
-(`src/modules/enrichment/splunk-mcp.service.ts`).
+Stage 2 asks Splunk over MCP, and the worker is the MCP client of the Splunk
+connector (`soc-mcp-splunk`, the MCP-Server repo): each requirement goes, as
+stage 1 stored it, to one tool, `splunk_lookup`, and the SPL that ran and its rows
+come back (`src/modules/enrichment/splunk-mcp.service.ts`). The connector builds
+the prompt, has Text-to-SPL write the search, checks it (`spl.check_readonly`) and
+runs it. Nothing Splunk-shaped is left in the backend, and it holds no Splunk
+credentials.
 
 | | |
 | --- | --- |
-| MCP server | Splunk's own MCP Server app on the search head |
-| `SPLUNK_MCP_URL` | `https://<search-head>:8089/services/mcp` |
-| `SPLUNK_MCP_TOKEN` | the encrypted token from the MCP Server app (CI variable) |
-| `NODE_EXTRA_CA_CERTS` | `/app/certs/<ca>.pem`, the CA that signed the certificate on 8089, committed to `certs/` |
+| MCP server | `soc-mcp-splunk` (MCP-Server/Splunk), on `soc-network` |
+| `SPLUNK_MCP_URL` | `http://soc-mcp-splunk:8200/services/mcp` |
+| `MCP_AUTH_TOKEN` | the connector's bearer token, the same value in both `.env` files |
+| Splunk's URL, token, CA, index allowlist, AI Assistant | `MCP-Server/.env` |
 
-It needs two apps (MCP Server, AI Assistant with Agent Mode on), a search-only
-role and token, a network path, and a certificate for the name in the URL
-first. How: [docs/splunk-mcp.md](docs/splunk-mcp.md). The `check_splunk` job
-checks it after every deploy; it may fail (⚠) without failing the pipeline.
+Which Splunk answers is the connector's setting: mock events, a Splunk container
+(`MCP-Server/external/splunk`), or the company's. For the company's it needs two
+apps (MCP Server, AI Assistant with Agent Mode on), a search-only role and token,
+a network path, and a certificate for the name in the URL first. How:
+[docs/splunk-mcp.md](docs/splunk-mcp.md). The `check_splunk` job checks the
+connector after every deploy; it may fail (⚠) without failing the pipeline.
 
 ## Auth
 

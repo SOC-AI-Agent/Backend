@@ -115,7 +115,7 @@ token ต้องผูกกับ role ที่:
 - เข้าได้เฉพาะ index ที่ต้องใช้จริง (`srchIndexesAllowed`) Backend ไม่จำกัด index เอง
 - **ไม่มี capability `delete_by_keyword`, `run_collect`, `run_mcollect`, `run_dump`, `run_sendalert`, `output_file`, `run_custom_command`** (ชื่อตาม [authorize.conf](https://help.splunk.com/en/data-management/splunk-enterprise-admin-manual/10.4/configuration-file-reference/10.4.0-configuration-file-reference/authorize.conf) — ไม่มี capability ชื่อ `run_script`)
 
-SPL ที่ Text-to-SPL เขียนถูกตรวจโดย [`spl-guard.ts`](../src/modules/enrichment/spl-guard.ts)
+SPL ที่ Text-to-SPL เขียนถูกตรวจโดย [`spl.check_readonly`](../../MCP-Server/Splunk/spl.py) ใน connector
 ก่อนส่งรัน และ Splunk MCP Server มี guardrail ของตัวเอง แต่ defence in depth ต้องมีหลายชั้น
 ชั้น role ของ token คือชั้นที่ขาดไม่ได้
 

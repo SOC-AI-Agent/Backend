@@ -3,20 +3,18 @@ import { ConfigService } from '@nestjs/config';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
-import { checkGeneratedSpl, toSplunkTime, withTimeWindow } from './spl-guard';
-
 /**
- * Splunk over MCP: a requirement goes in as text, Splunk writes the SPL, Splunk runs it.
+ * Splunk over MCP: a requirement goes in as stage 1 stored it, the answer comes back.
  *
- * Two tools, named as Splunk's MCP Server names them: `saia_generate_spl` (Text-to-SPL,
- * Splunk AI Assistant for SPL) and `splunk_run_query`. In development they are served
- * by MCP-Server/Splunk in mock mode; in production SPLUNK_MCP_URL points at Splunk's own
- * MCP server and nothing here changes. No model on this side calls them — the backend
- * does, one requirement at a time.
+ * Everything Splunk-shaped lives in the connector, MCP-Server/Splunk: the prompt
+ * Text-to-SPL gets, Text-to-SPL itself, the read-only check, the search, and trimming
+ * the rows for a small model. This is only the client — two tools, `splunk_lookup`
+ * (write the SPL, check it, run it) and `splunk_text_to_spl` (the first half, nothing
+ * searched). No model on this side calls them — the backend does, one requirement at
+ * a time.
  *
- * Between the two calls the generated SPL is checked (spl-guard): read-only, and the
- * alert's window added if the SPL did not set one. Which indexes it may read is the
- * Splunk role's business.
+ * Which Splunk answers is the connector's configuration, not the backend's: mock
+ * events, a Splunk container, or the company's Splunk with Splunk AI Assistant.
  */
 
 /** What stage 1 stored for one requirement. */
@@ -49,17 +47,6 @@ export interface SplunkQuestion {
   latest?: string;
 }
 
-/** A playbook's grouped count as one line: "count, dc(dstip) by dstip, dstport per 1h, sorted by -count". */
-function describeSummary(s: NonNullable<SplunkQuestion['summarise']>): string {
-  const metrics = (s.metrics ?? []).map((m) => (m.field ? `${m.fn}(${m.field})` : m.fn)).join(', ') || 'count';
-  return [
-    metrics,
-    s.group_by?.length ? `by ${s.group_by.join(', ')}` : '',
-    s.span ? `per ${s.span}` : '',
-    s.sort ? `sorted by ${s.sort}` : '',
-  ].filter(Boolean).join(' ');
-}
-
 export interface SplunkAnswer {
   /** The text that was sent to Text-to-SPL. */
   prompt: string;
@@ -72,6 +59,15 @@ export interface SplunkAnswer {
   limit: number;
   /** The far end said it answered from mock data. */
   mock: boolean;
+  /** The rows as an analyst reads them: what ran, how much came back, the rows. */
+  answer: string;
+}
+
+/** A requirement the connector could not answer. Carries the prompt it had built, when it got that far. */
+export class SplunkLookupError extends Error {
+  constructor(message: string, readonly prompt?: string, readonly spl?: string) {
+    super(message);
+  }
 }
 
 /** Text-to-SPL alone: what Splunk wrote for a question, and whether the guard would let it run. */
@@ -87,33 +83,11 @@ export interface SplunkDraft {
 }
 
 export interface SplunkSession {
-  /** The argument of the Text-to-SPL tool the request is sent in, as read from its schema. */
-  promptArg: string;
+  /** Throws SplunkLookupError when the requirement could not be answered. */
   ask(question: SplunkQuestion): Promise<SplunkAnswer>;
   /** Only the first half of ask: Text-to-SPL and the guard. Nothing is searched. */
   generate(question: SplunkQuestion): Promise<SplunkDraft>;
   close(): Promise<void>;
-}
-
-// Whole events do not fit a small model's context: keep the fields that carry
-// meaning plus a bounded slice of _raw. `host` and `source` on forwarded syslog
-// name the forwarder, not the machine the alert is about.
-const MAX_RAW_CHARS = 800;
-const DROPPED_FIELDS = new Set([
-  '_bkt', '_cd', '_indextime', '_serial', '_si', '_sourcetype', '_kv',
-  'linecount', 'punct', 'splunk_server', 'eventtype', 'tag', 'timestamp', 'host', 'source',
-]);
-
-function trimRow(row: Record<string, unknown>): Record<string, unknown> {
-  const trimmed: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(row)) {
-    if (DROPPED_FIELDS.has(key)) continue;
-    trimmed[key] =
-      key === '_raw' && typeof value === 'string' && value.length > MAX_RAW_CHARS
-        ? `${value.slice(0, MAX_RAW_CHARS)}… [${value.length - MAX_RAW_CHARS} chars truncated]`
-        : value;
-  }
-  return trimmed;
 }
 
 /** A tool's answer as data: structured content, else the text parsed as JSON, else the text. */
@@ -131,97 +105,21 @@ function payloadOf(result: any, tool: string): any {
   }
 }
 
-/** The SPL in what Text-to-SPL answered — a field, a fenced block, or the first line that is one. */
-function splOf(payload: any): string {
-  if (payload && typeof payload === 'object') {
-    const found = payload.spl ?? payload.query ?? payload.search;
-    if (typeof found === 'string') return found.trim();
-  }
-  const text = String(payload ?? '');
-  const fenced = /```(?:spl|splunk)?\s*\n([\s\S]*?)```/i.exec(text);
-  if (fenced) return fenced[1].trim();
-  const line = text.split('\n').map((l) => l.trim()).find((l) => /^(search\s|index\s*=|\|)/i.test(l));
-  return (line ?? '').trim();
-}
-
-function rowsOf(payload: any): Array<Record<string, unknown>> {
-  if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.results)) return payload.results;
-  return [];
-}
-
 @Injectable()
 export class SplunkMcpService {
   private readonly logger = new Logger(SplunkMcpService.name);
 
   constructor(private readonly config: ConfigService) {}
 
-  /** The endpoint, accepting a bare base URL and adding the path Splunk serves MCP at. */
+  /** The endpoint, accepting a bare base URL and adding the path the connector serves MCP at. */
   private endpoint(): URL {
     const url = new URL(this.config.get<string>('splunk.mcpUrl'));
     if (url.pathname === '/' || url.pathname === '') url.pathname = '/services/mcp';
     return url;
   }
 
-  /**
-   * The prompt Text-to-SPL gets: the question, the details from the alert it is
-   * about, where to look, which field each value sits in here, and when.
-   *
-   *   What else did 45.83.122.9 touch in the 24 hours around the alert.
-   *   Details from the alert:
-   *   - source: 45.83.122.9
-   *   - device: FGT-01
-   *   Search index=main sourcetype=fortigate
-   *   Field names in this data: 45.83.122.9 is in srcip or dstip; FGT-01 is in devname. Use these field names.
-   *   Time range: earliest=1790831054 latest=1790917454
-   *
-   * The details and the field names are what Text-to-SPL cannot know on its own:
-   * which device and which kind of event the question is about, and that this
-   * estate says `srcip` where CIM says `src_ip`.
-   */
-  promptFor(q: SplunkQuestion): { prompt: string; earliest: string; latest: string } {
-    const earliest = toSplunkTime(q.earliest, '-24h');
-    const latest = toSplunkTime(q.latest, 'now');
-    const scope = (index?: string, sourcetype?: string) =>
-      [index && `index=${index}`, sourcetype && `sourcetype=${sourcetype}`].filter(Boolean).join(' ');
-    const where = scope(q.index, q.sourcetype);
-    const from = scope(q.alertIndex, q.alertSourcetype);
-
-    const lines = [`${q.requirement.replace(/[.\s]+$/, '')}.`];
-    const details = Object.entries(q.context ?? {});
-    if (details.length) {
-      lines.push('Details from the alert:', ...details.map(([key, value]) => `- ${key}: ${value}`));
-    }
-    if (q.frequencyOf) {
-      // The alert's own index is the wrong place to count alerts in.
-      const { alertIndex, alertNameField } = this.config.get('splunk');
-      lines.push(`Fired alerts are in index=${alertIndex}; the alert name is in the field ${alertNameField}.`);
-    } else if (where) lines.push(`Search ${where}`);
-    else if (from) lines.push(`The alert came from ${from}`);
-    const filters = Object.entries(q.filters ?? {});
-    if (filters.length) lines.push(`Only events where ${filters.map(([f, v]) => `${f}="${v}"`).join(' and ')}.`);
-    if (q.summarise) lines.push(`Summarise: ${describeSummary(q.summarise)}.`);
-    // Lookups the backend planned itself carry the indicator's fields, not hints.
-    const hints = (
-      q.fieldHints?.length
-        ? q.fieldHints
-        : q.indicator && q.fields?.length ? [{ value: q.indicator, fields: q.fields }] : []
-    ).filter((h) => h.value && h.fields?.length);
-    if (hints.length) {
-      lines.push(
-        `Field names in this data: ${hints.map((h) => `${h.value} is in ${h.fields.join(' or ')}`).join('; ')}. ` +
-          'Use these field names.',
-      );
-    }
-    // Values last and unpunctuated: a trailing full stop read as part of the time
-    // or the index name is a search for something that does not exist.
-    lines.push(`Time range: earliest=${earliest} latest=${latest}`);
-    return { prompt: lines.join('\n'), earliest, latest };
-  }
-
   async connect(): Promise<SplunkSession> {
-    const { token, timeoutMs, generateTool, generateArg, queryTool, maxCount } =
-      this.config.get('splunk');
+    const { token, timeoutMs, lookupTool, textToSplTool } = this.config.get('splunk');
     const url = this.endpoint();
     const client = new Client({ name: 'soc-backend', version: '1.0.0' });
     const transport = new StreamableHTTPClientTransport(url, {
@@ -230,89 +128,53 @@ export class SplunkMcpService {
     try {
       await client.connect(transport);
     } catch (err: any) {
-      throw new Error(`cannot connect to Splunk's MCP server at ${url.href}: ${err?.message ?? err}`);
+      throw new Error(`cannot connect to the Splunk connector at ${url.href}: ${err?.message ?? err}`);
     }
 
-    // The argument Text-to-SPL takes the request in, read from the tool itself:
-    // whatever Splunk names it, this does not need a release to follow.
-    const tools = (await client.listTools()).tools;
-    const generate = tools.find((t) => t.name === generateTool);
-    const run = tools.find((t) => t.name === queryTool);
-    if (!generate || !run) {
+    const tools = (await client.listTools()).tools.map((t) => t.name);
+    const missing = [lookupTool, textToSplTool].filter((name) => !tools.includes(name));
+    if (missing.length) {
       await client.close();
-      const missing = [!generate && generateTool, !run && queryTool].filter(Boolean).join(', ');
       throw new Error(
-        `Splunk's MCP server has no ${missing}. Text-to-SPL needs Splunk AI Assistant for SPL ` +
-          'installed and its tools enabled in the MCP Server app.',
+        `the MCP server at ${url.href} has no ${missing.join(', ')}. SPLUNK_MCP_URL must point at ` +
+          "soc-mcp-splunk (MCP-Server/Splunk), not at Splunk's own MCP server — the connector is what talks to Splunk.",
       );
     }
-    const props = Object.entries((generate.inputSchema?.properties ?? {}) as Record<string, any>);
-    const required = (generate.inputSchema?.required ?? []) as string[];
-    const promptArg =
-      generateArg ||
-      props.find(([name, schema]) => required.includes(name) && schema?.type === 'string')?.[0] ||
-      props.find(([, schema]) => schema?.type === 'string')?.[0];
-    if (!promptArg) {
-      await client.close();
-      throw new Error(`cannot tell which argument of ${generateTool} takes the request; set SPLUNK_MCP_GENERATE_ARG`);
-    }
 
-    const call = (name: string, args: Record<string, unknown>) =>
-      client.callTool({ name, arguments: args }, undefined, { timeout: timeoutMs }).then((r) => payloadOf(r, name));
+    // The stored plan has nulls where stage 1 found nothing; the connector reads absent, not null.
+    const call = (name: string, q: SplunkQuestion) =>
+      client
+        .callTool(
+          { name, arguments: { question: Object.fromEntries(Object.entries(q).filter(([, v]) => v != null)) } },
+          undefined,
+          { timeout: timeoutMs },
+        )
+        .then((r) => payloadOf(r, name));
 
     return {
-      promptArg,
       ask: async (q: SplunkQuestion): Promise<SplunkAnswer> => {
-        const { prompt, earliest, latest } = this.promptFor(q);
-        const generated = splOf(await call(generateTool, { [promptArg]: prompt }));
-        if (!generated) throw new Error(`${generateTool} returned no SPL for: ${prompt}`);
-        const spl = checkGeneratedSpl(withTimeWindow(generated, earliest, latest));
-
-        const ran = await call(queryTool, { query: spl });
-        const all = rowsOf(ran);
-        const limit = maxCount;
-        const rows = all.slice(0, limit).map(trimRow);
-        this.logger.log(`ran ${rows.length} row(s) for "${q.requirement.slice(0, 60)}": ${spl}`);
+        const got = await call(lookupTool, q);
+        if (got?.error || typeof got?.spl !== 'string') {
+          throw new SplunkLookupError(got?.error ?? `${lookupTool} returned no SPL`, got?.prompt, got?.spl);
+        }
+        this.logger.log(`ran ${got.count} row(s) for "${q.requirement.slice(0, 60)}": ${got.spl}`);
         return {
-          prompt,
-          spl,
-          rows,
-          count: rows.length,
-          capped: all.length >= limit,
-          limit,
-          mock: ran?.mock === true,
+          prompt: got.prompt,
+          spl: got.spl,
+          rows: got.rows ?? [],
+          count: got.count ?? 0,
+          capped: got.capped === true,
+          limit: got.limit ?? 0,
+          mock: got.mock === true,
+          answer: got.answer ?? '',
         };
       },
       generate: async (q: SplunkQuestion): Promise<SplunkDraft> => {
-        const { prompt, earliest, latest } = this.promptFor(q);
-        const generated = splOf(await call(generateTool, { [promptArg]: prompt }));
-        if (!generated) throw new Error(`${generateTool} returned no SPL for: ${prompt}`);
-        try {
-          return { prompt, generated, spl: checkGeneratedSpl(withTimeWindow(generated, earliest, latest)) };
-        } catch (err: any) {
-          return { prompt, generated, refused: err?.message ?? String(err) };
-        }
+        const got = await call(textToSplTool, q);
+        if (got?.error) throw new SplunkLookupError(got.error, got?.prompt);
+        return { prompt: got.prompt, generated: got.generated, spl: got.spl, refused: got.refused };
       },
       close: () => client.close(),
     };
-  }
-
-  /** The answer as an analyst reads it: what ran, how much came back, the rows. */
-  render(a: SplunkAnswer): string {
-    const head =
-      `Splunk ran: ${a.spl}\n` +
-      `${a.capped ? `At least ${a.count}` : a.count} row(s).` +
-      (a.capped ? ` Stopped at ${a.limit}; there may be more.` : '') +
-      (a.mock ? '\nMOCK DATA from the development connector — not real Splunk results.' : '');
-    if (a.count === 0) return `${head}\nNothing matched in that window.`;
-    const lines = a.rows.map(
-      (row) =>
-        '- ' +
-        Object.entries(row)
-          .filter(([k, v]) => v !== null && v !== '' && k !== '_raw')
-          .map(([k, v]) => `${k}=${String(v)}`)
-          .join('  '),
-    );
-    return [head, ...lines].join('\n');
   }
 }

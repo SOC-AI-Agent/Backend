@@ -14,10 +14,10 @@ import { TextToSplDto } from './dto/text-to-spl.dto';
 import { TextToSplResponse } from './dto/text-to-spl.response';
 
 /**
- * Splunk's Text-to-SPL by hand, from the API docs: a requirement in, the SPL
- * Splunk writes for it out — the first half of a stage-2 lookup, with the same
- * prompt, MCP connection, token, CA and guard, and nothing searched. For trying
- * requirements before the whole pipeline is in place.
+ * Text-to-SPL by hand, from the API docs: a requirement in, the SPL written for
+ * it out — the first half of a stage-2 lookup, through the same connector
+ * (MCP-Server/Splunk `splunk_text_to_spl`), with the same prompt and check, and
+ * nothing searched. For trying requirements before the whole pipeline is in place.
  */
 @ApiTags('Splunk')
 @Controller('v1/splunk')
@@ -34,15 +34,16 @@ export class SplunkController {
   @ApiOperation({
     summary: "Ask Splunk's Text-to-SPL for the SPL of one requirement",
     description:
-      'Sends the requirement to `saia_generate_spl` exactly as a stage-2 lookup would — with the details, ' +
-      'index, sourcetype and time range given — and returns the SPL Splunk wrote and whether the guard would ' +
-      'run it. Nothing is searched. The text goes to Splunk AI Assistant, which processes it in Splunk Cloud.',
+      'Sends the requirement to the Splunk connector exactly as a stage-2 lookup would — with the details, ' +
+      'index, sourcetype and time range given — and returns the SPL written for it and whether the check would ' +
+      'run it. Nothing is searched. Where the connector is set up for Splunk AI Assistant, the text goes to ' +
+      'it and is processed in Splunk Cloud; otherwise a template writes the SPL.',
   })
   @ApiOkResponse({ type: TextToSplResponse })
   @ApiBadRequestResponse({ type: ErrorResponse, description: 'No requirement, or a field of the wrong type.' })
   @ApiBadGatewayResponse({
     type: ErrorResponse,
-    description: "Splunk's MCP server could not be reached, refused the token, has no Text-to-SPL tool, or returned no SPL.",
+    description: 'The Splunk connector could not be reached, refused the token, or Text-to-SPL returned no SPL.',
   })
   async textToSpl(@Body() body: TextToSplDto, @Req() req: Request): Promise<TextToSplResponse> {
     const user = (req as Request & { user?: { username?: string } }).user?.username ?? '?';

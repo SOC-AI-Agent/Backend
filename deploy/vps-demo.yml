@@ -1,0 +1,196 @@
+# VPS demo stack for Ubuntu 26.04.1 LTS (8 vCPU / 32 GB RAM, CPU-only).
+#
+# Run from Backend/ via deploy/vps-demo.sh, or directly:
+#   docker compose -f deploy/vps-demo.yml --project-directory . --env-file .env up -d --build
+#
+# Differences from deploy/stack.yml:
+# - Clears Frontend's office NPM_PROXY build-arg so npm ci goes direct.
+# - Joins the pre-created external `soc-network` shared with soc-splunk and soc-mcp-splunk.
+# - Runs soc-mcp-splunk in live mode against external/splunk (reads MCP-Server/.env).
+# - Adds host.docker.internal:host-gateway to API/worker so CONFLUENCE_PROXY on the VPS host works.
+# - Sets mem_limit, cpus, OMP_NUM_THREADS=2 (soc-ai), and json-file log rotation on every service.
+
+services:
+  # ── Data ────────────────────────────────────────────────────────────────
+  soc-db:
+    image: postgres:16-alpine
+    container_name: soc-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-socai}
+      POSTGRES_USER: ${POSTGRES_USER:-socai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - max_connections=50
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-socai}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: 768m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    networks: [soc-network]
+
+  soc-redis:
+    image: redis:7-alpine
+    container_name: soc-core-redis
+    command: redis-server --appendonly yes --maxmemory 192mb --maxmemory-policy noeviction
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: 256m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    networks: [soc-network]
+
+  # ── Core ────────────────────────────────────────────────────────────────
+  soc-core-api:
+    build: ${REPOS:-..}/Backend
+    container_name: soc-core-api
+    command: node dist/main.js
+    environment:
+      APP_ROLE: api
+      NODE_OPTIONS: "--max-old-space-size=512"
+    ports: ["${BACKEND_HOST_PORT:-8082}:8000"]
+    env_file: ["${REPOS:-..}/Backend/.env"]
+    volumes: ["./certs:/certs:ro"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      soc-db: {condition: service_healthy}
+      soc-redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    mem_limit: 768m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    networks: [soc-network]
+
+  soc-core-worker:
+    build: ${REPOS:-..}/Backend
+    container_name: soc-core-worker
+    command: node dist/main.js
+    environment:
+      APP_ROLE: worker
+      NODE_OPTIONS: "--max-old-space-size=512"
+    env_file: ["${REPOS:-..}/Backend/.env"]
+    volumes: ["./certs:/certs:ro"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      soc-db: {condition: service_healthy}
+      soc-redis: {condition: service_healthy}
+    mem_limit: 768m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    networks: [soc-network]
+
+  # ── AI Service ──────────────────────────────────────────────────────────
+  soc-ai:
+    build: ${REPOS:-..}/AI-Service
+    container_name: soc-ai
+    env_file: ["${REPOS:-..}/AI-Service/.env"]
+    environment:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      TOKENIZERS_PARALLELISM: "false"
+    volumes: [playbook-index:/data]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    mem_limit: 1536m
+    cpus: 2.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    networks: [soc-network]
+
+  # ── Splunk MCP Connector (live mode -> soc-splunk) ──────────────────────
+  soc-mcp-splunk:
+    build: ${REPOS:-..}/MCP-Server/Splunk
+    container_name: soc-mcp-splunk
+    env_file: ["${REPOS:-..}/MCP-Server/.env"]
+    volumes:
+      - "${REPOS:-..}/MCP-Server/certs:/certs:ro"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8200/health', timeout=5).status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    mem_limit: 512m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    networks: [soc-network]
+
+  # ── Dashboard ───────────────────────────────────────────────────────────
+  soc-frontend:
+    build:
+      context: ${REPOS:-..}/Frontend
+      args:
+        NPM_PROXY: ""
+    container_name: soc-dashboard
+    environment:
+      BACKEND_HOST: soc-core-api
+      BACKEND_PORT: 8000
+    ports: ["${FRONTEND_HOST_PORT:-3002}:80"]
+    depends_on: [soc-core-api]
+    mem_limit: 128m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    networks: [soc-network]
+
+volumes:
+  postgres-data:
+  redis-data:
+  playbook-index:
+
+networks:
+  soc-network:
+    external: true
+    name: soc-network

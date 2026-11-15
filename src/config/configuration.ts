@@ -174,35 +174,26 @@ export default () => ({
   },
   splunk: {
     /**
-     * Splunk's MCP endpoint. The Splunk stage sends each requirement as text to
-     * Text-to-SPL and runs the SPL that comes back (enrichment/splunk-mcp.service.ts).
-     * Development: the mock connector, MCP-Server/Splunk. Production: Splunk's own
-     * MCP Server app, https://<splunk>:8089/services/mcp. A bare base URL gets
+     * The Splunk connector's MCP endpoint (MCP-Server/Splunk, soc-mcp-splunk). The
+     * Splunk stage sends each requirement to it as stage 1 stored it and gets the SPL
+     * that ran and its rows back (enrichment/splunk-mcp.service.ts). Which Splunk is
+     * behind it — mock events, a Splunk container, the company's — and how the SPL
+     * is written is configured there, in MCP-Server/.env. A bare base URL gets
      * /services/mcp added.
      */
     mcpUrl: process.env.SPLUNK_MCP_URL ?? 'http://soc-mcp-splunk:8200/services/mcp',
     /**
-     * Bearer token for that endpoint. Production: a Splunk token created with
-     * audience "mcp". Development: the connector's MCP_AUTH_TOKEN, used when this
-     * is unset.
+     * Bearer token for that endpoint: the connector's MCP_AUTH_TOKEN, byte for
+     * byte. SPLUNK_MCP_TOKEN overrides it. Splunk's own token is the connector's
+     * to hold, not the backend's.
      */
     token: process.env.SPLUNK_MCP_TOKEN || process.env.MCP_AUTH_TOKEN || '',
-    /** Tool names, as Splunk's MCP Server publishes them. */
-    generateTool: process.env.SPLUNK_MCP_GENERATE_TOOL ?? 'saia_generate_spl',
-    queryTool: process.env.SPLUNK_MCP_QUERY_TOOL ?? 'splunk_run_query',
-    /** Which argument of the generate tool takes the request. Blank: read from the tool's schema. */
-    generateArg: process.env.SPLUNK_MCP_GENERATE_ARG ?? '',
-    /** Ceiling on rows kept per requirement, whatever Splunk returns. */
-    maxCount: toInt(process.env.SPLUNK_MAX_COUNT, 200),
-    /**
-     * Where fired alerts are, and the field holding an alert's name — told to
-     * Text-to-SPL for "how often has this alert fired". Splunk ES defaults; a
-     * plain Splunk install differs.
-     */
-    alertIndex: process.env.SPLUNK_ALERT_INDEX ?? 'notable',
-    alertNameField: process.env.SPLUNK_ALERT_NAME_FIELD ?? 'search_name',
-    // One MCP tool call. Text-to-SPL waits on Splunk AI Assistant, which takes
-    // tens of seconds; Splunk's own guardrail stops a search at one minute.
+    /** The connector's tools: a whole lookup, and Text-to-SPL alone. */
+    lookupTool: process.env.SPLUNK_MCP_LOOKUP_TOOL ?? 'splunk_lookup',
+    textToSplTool: process.env.SPLUNK_MCP_TEXT_TO_SPL_TOOL ?? 'splunk_text_to_spl',
+    // One MCP tool call, which is Text-to-SPL and the search together. Splunk AI
+    // Assistant takes tens of seconds; Splunk's own guardrail stops a search at
+    // one minute.
     timeoutMs: toInt(process.env.SPLUNK_SEARCH_TIMEOUT, 120) * 1000,
   },
   lookup: {

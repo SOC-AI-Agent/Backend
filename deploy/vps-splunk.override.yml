@@ -1,0 +1,15 @@
+# VPS resource-optimization override for MCP-Server/external/splunk.
+#
+# Use with MCP-Server/external/splunk/docker-compose.yml:
+#   cd MCP-Server/external/splunk
+#   docker compose -f docker-compose.yml -f ../../../Backend/deploy/vps-splunk.override.yml up -d
+
+services:
+  soc-splunk:
+    mem_limit: 4g
+    cpus: 2.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

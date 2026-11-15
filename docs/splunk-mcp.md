@@ -1,10 +1,27 @@
 # Splunk ผ่าน MCP
 
-Stage 2 ถาม Splunk ผ่าน MCP โดยมี Backend (`soc-core-worker`) เป็น **MCP client** ตัวเดียว
-ขั้นตอนคือส่งแต่ละ requirement เป็น**ข้อความ**ให้ Text-to-SPL ของ Splunk เขียน SPL, ตรวจ SPL ที่ได้,
-แล้วสั่งให้ Splunk รัน ฝั่งเราไม่มี model ตัวไหนเขียน SPL
+Stage 2 ถาม Splunk ผ่าน MCP โดย Backend (`soc-core-worker`) เป็น **MCP client** ของ connector
+`soc-mcp-splunk` ([MCP-Server/Splunk](../../MCP-Server/Splunk/README.md)) Backend ส่งแต่ละ requirement
+ตามที่ stage 1 เก็บไว้ไปที่ tool เดียวคือ `splunk_lookup` ส่วน connector สร้าง prompt, ให้ Text-to-SPL
+เขียน SPL, ตรวจ SPL ที่ได้, สั่ง Splunk รัน แล้วส่ง SPL กับแถวกลับมา ฝั่งเราไม่มี model ตัวไหนเขียน SPL
 
-เอกสารนี้คือขั้นตอนต่อ Backend บน production เข้ากับ **Splunk MCP Server app** บน search head ของบริษัท
+> **เปลี่ยนแล้ว: งานฝั่ง Splunk ย้ายจาก Backend ไปอยู่ที่ connector**
+> เดิม Backend ต่อ Splunk MCP Server app ตรง ๆ เรียก `saia_generate_spl` แล้วตรวจด้วย `spl-guard.ts`
+> แล้วเรียก `splunk_run_query` เอง ตอนนี้ prompt, การตรวจ SPL, การใส่ช่วงเวลา และการตัดแถว
+> อยู่ใน [`MCP-Server/Splunk/lookup.py`](../../MCP-Server/Splunk/lookup.py) กับ
+> [`spl.py`](../../MCP-Server/Splunk/spl.py) ผลที่ตามมา:
+>
+> - `SPLUNK_MCP_URL` ของ Backend ต้องชี้ที่ **connector** (`http://soc-mcp-splunk:8200/services/mcp`)
+>   เสมอ ไม่ใช่ที่ Splunk และ token คือ `MCP_AUTH_TOKEN` ของ connector
+> - ค่าที่เกี่ยวกับ Splunk ตั้งที่ `MCP-Server/.env`: `SPLUNK_BASE_URL`, `SPLUNK_TOKEN`,
+>   `SPLUNK_ALLOWED_INDEXES`, `SSL_CERT_FILE` (CA) และถ้าจะใช้ Splunk AI Assistant ให้ตั้ง
+>   `SPLUNK_SAIA_MCP_URL` (= `https://<search-head>:8089/services/mcp`) กับ `SPLUNK_SAIA_MCP_TOKEN`
+>   (encrypted token จากหัวข้อ 2) ถ้าเว้น `SPLUNK_SAIA_MCP_URL` ว่าง connector เขียน SPL จาก template
+> - ขั้นตอนฝั่ง Splunk ในหัวข้อ 1–3 ยังใช้ได้ตามเดิม แต่ตัวที่ต่อออกไปหา Splunk คือ container
+>   `soc-mcp-splunk` ไม่ใช่ `soc-core-worker` **ดังนั้น connector ต้อง deploy บน production ด้วย**
+>   หัวข้อ 4–5 (CI variables, `check_splunk`, `splunk-probe.sh`) ยังเขียนตามเส้นทางเดิมและต้องปรับตาม
+> - ลองกับ Splunk จริงโดยไม่ต้องใช้เครือข่ายบริษัท: Splunk container ใน
+>   [MCP-Server/external/splunk](../../MCP-Server/external/splunk/README.md)
 
 | ขั้น | ทำที่ | |
 | --- | --- | --- |
@@ -21,29 +38,32 @@ Stage 2 ถาม Splunk ผ่าน MCP โดยมี Backend (`soc-core-wor
 ```
 requirement จาก stage 1 (ข้อความ + รายละเอียดจาก alert; index, sourcetype, ชื่อ field จาก catalogue; ช่วงเวลาของ alert)
    │
-soc-core-worker ──MCP── saia_generate_spl ──► SPL           (Text-to-SPL: Splunk AI Assistant)
-   │  spl-guard: อ่านอย่างเดียว, ใส่ช่วงเวลาของ alert
-   └──────────MCP── splunk_run_query ──► แถว ──► คำตอบบน job (พร้อม SPL ที่รัน) ──► soc-conclude
+soc-core-worker ──MCP── splunk_lookup ──► soc-mcp-splunk (connector)
+                                             │ lookup.build_prompt ──► Text-to-SPL ──► SPL
+                                             │     (Splunk AI Assistant ผ่าน SPLUNK_SAIA_MCP_URL หรือ template)
+                                             │ spl.check_readonly: อ่านอย่างเดียว, index ที่อนุญาต, ใส่ช่วงเวลาของ alert
+                                             └ REST /services/search/jobs ──► Splunk ──► แถว
+   ◄── prompt, SPL ที่รัน, แถว, คำตอบ ──┘ ──► คำตอบบน job ──► soc-conclude
 ```
 
-**ใครเป็นอะไร** Backend (`soc-core-worker`) คือ **MCP client** ที่เรียก tool ทั้งสองตัวเอง ส่วน
-Splunk MCP Server app คือ **MCP server** ที่เก็บ tool ไว้ และ Text-to-SPL ทำงานในฝั่ง Splunk
-(Splunk AI Assistant) ไม่ใช่ฝั่งเรา `saia_generate_spl` มีหน้าที่แค่*เขียน* SPL แล้วส่งกลับมา ไม่ได้รันเอง
-การรันเป็น call ที่สอง SPL จึงต้องผ่าน Backend ก่อน และ `spl-guard` ตรวจตรงนั้นก่อนสั่งรัน
-ไม่มีอะไรคั่นระหว่าง Backend กับ Splunk
+**ใครเป็นอะไร** Backend (`soc-core-worker`) คือ **MCP client** ของ connector และเรียก tool เดียว
+connector (`soc-mcp-splunk`) คือ **MCP server** ของเรา ถือ token ของ Splunk และเป็นตัวเดียวที่คุยกับ Splunk
+Text-to-SPL มีหน้าที่แค่*เขียน* SPL ไม่ได้รันเอง SPL ทุกตัวผ่าน `spl.check_readonly` ใน connector ก่อนรัน
 
 | | ค่า |
 | --- | --- |
-| MCP server | Splunk MCP Server app บน search head |
-| `SPLUNK_MCP_URL` | `https://<search-head>:8089/services/mcp` |
-| `SPLUNK_MCP_TOKEN` | encrypted token จากแอป (CI variable) |
-| `NODE_EXTRA_CA_CERTS` | `/app/certs/<ca>.pem` เฉพาะเมื่อ cert ของ 8089 ไม่ได้ออกโดย CA สาธารณะ (ดูหัวข้อ 3.2) |
-| Text-to-SPL | Splunk AI Assistant (cloud-connected, Agent Mode) |
+| MCP server ที่ Backend ต่อ | `soc-mcp-splunk` (connector) |
+| `SPLUNK_MCP_URL` (Backend) | `http://soc-mcp-splunk:8200/services/mcp` |
+| `MCP_AUTH_TOKEN` (Backend และ connector) | ค่าเดียวกันทั้งสองฝั่ง |
+| `SPLUNK_BASE_URL`, `SPLUNK_TOKEN` (connector) | `https://<search-head>:8089` และ token ธรรมดาของ service account |
+| `SPLUNK_SAIA_MCP_URL`, `SPLUNK_SAIA_MCP_TOKEN` (connector) | `https://<search-head>:8089/services/mcp` และ encrypted token จากแอป เว้นว่าง = template |
+| `SSL_CERT_FILE` (connector) | `/certs/<ca>.pem` เฉพาะเมื่อ cert ของ 8089 ไม่ได้ออกโดย CA สาธารณะ (ดูหัวข้อ 3.2) |
+| Text-to-SPL | Splunk AI Assistant (cloud-connected, Agent Mode) หรือ template ของ connector |
 
 ### สิ่งที่ส่งให้ Text-to-SPL
 
-ตัวอย่างข้อความที่ส่งไป `saia_generate_spl` สำหรับ requirement หนึ่งข้อ
-(สร้างโดย `promptFor` ใน [splunk-mcp.service.ts](../src/modules/enrichment/splunk-mcp.service.ts)):
+ตัวอย่างข้อความที่ส่งไป Text-to-SPL สำหรับ requirement หนึ่งข้อ
+(สร้างโดย `build_prompt` ใน [MCP-Server/Splunk/lookup.py](../../MCP-Server/Splunk/lookup.py)):
 
 ```
 What else did 45.83.122.9 touch in the 24 hours around the alert.
@@ -213,14 +233,12 @@ Node ตรวจทั้ง CA และชื่อ: ชื่อใน `SPLU
 
 | ตัวแปร | ค่า | หมายเหตุ |
 | --- | --- | --- |
-| `SPLUNK_MCP_URL` | `https://<search-head>:8089/services/mcp` | **ต้องตั้ง** ค่า default ใน `.env.example` ชี้ไปที่ตัวที่ไม่มีบน production ถ้าใส่แค่ base URL เช่น `https://<search-head>:8089` ระบบจะเติม `/services/mcp` ให้ |
-| `SPLUNK_MCP_TOKEN` | encrypted token จากหัวข้อ 2 | Protected + Masked ถ้าเว้นว่าง Splunk จะตอบ 401 |
-| `NODE_EXTRA_CA_CERTS` | `/app/certs/<ca>.pem` | เฉพาะเมื่อ cert ของ 8089 ไม่ได้ออกโดย CA สาธารณะ ดูหัวข้อ 3.2 ว่าต้องตั้งไหม |
+| `SPLUNK_MCP_URL` | `http://soc-mcp-splunk:8200/services/mcp` (default) | ชี้ที่ connector ไม่ใช่ที่ Splunk ถ้าใส่แค่ base URL ระบบจะเติม `/services/mcp` ให้ |
+| `MCP_AUTH_TOKEN` | ค่าเดียวกับใน `MCP-Server/.env` | Protected + Masked ถ้าไม่ตรงกัน connector จะตอบ 401 (`SPLUNK_MCP_TOKEN` ใช้แทนได้ถ้าตั้ง) |
+| ค่าของ Splunk เอง | ตั้งที่ `MCP-Server/.env` | `SPLUNK_BASE_URL`, `SPLUNK_TOKEN`, `SPLUNK_ALLOWED_INDEXES`, `SPLUNK_SAIA_MCP_URL`, `SPLUNK_SAIA_MCP_TOKEN`, `SSL_CERT_FILE` ดู [MCP-Server/.env.example](../../MCP-Server/.env.example) |
 | `SPLUNK_SEARCH_TIMEOUT` | `120` (default) | วินาทีต่อ MCP call หนึ่งครั้ง Text-to-SPL ใช้เวลาหลายสิบวินาที และ Splunk หยุด search ที่ 1 นาทีอยู่แล้ว [3] |
-| `SPLUNK_MAX_COUNT` | `200` (default) | จำนวนแถวที่เก็บต่อ requirement (Splunk คืนได้ไม่เกิน 1000 event) [3] |
 | `SPLUNK_LOOKUP_MODE` | `manual` (default) | `manual` คือรอ analyst กดปุ่ม, `auto` คือรันทุก alert, `off` คือปิด stage 2 (ใช้ระหว่างที่ Splunk ยังไม่พร้อม) |
-| `SPLUNK_MCP_GENERATE_ARG` | เว้นว่าง | ชื่อ argument ที่ `saia_generate_spl` ใช้รับข้อความ Splunk ไม่ได้บอกไว้ Backend จึงอ่านจาก schema ของ tool เอง ให้ตั้งค่านี้เฉพาะเมื่ออ่านไม่ได้ |
-| `SPLUNK_MCP_GENERATE_TOOL` / `SPLUNK_MCP_QUERY_TOOL` | เว้นว่าง (ใช้ค่า default) | ตั้งเฉพาะเมื่อ Splunk เปลี่ยนชื่อ tool |
+| `SPLUNK_SAIA_ARG` / `SPLUNK_SAIA_TOOL` (connector) | เว้นว่าง (ใช้ค่า default) | ชื่อ tool และ argument ของ Text-to-SPL บน Splunk connector อ่านชื่อ argument จาก schema ของ tool เอง ตั้งเฉพาะเมื่ออ่านไม่ได้หรือ Splunk เปลี่ยนชื่อ |
 
 **catalogue** job `export_catalog` เรียก REST API ของ Splunk โดยตรง (ไม่ผ่าน MCP) จึงต้องตั้ง
 CI variable `SPLUNK_URL` และ `SPLUNK_TOKEN` แยก โดย `SPLUNK_TOKEN` เป็น token **ธรรมดา**
@@ -339,10 +357,10 @@ guard) หรือ `refused` (เหตุผลที่ guard ไม่ให
   และหน้า evidence แสดงทั้งสองอย่าง ช่วง alert แรก ๆ ให้เปิดดูทุกครั้ง
 - **guardrail ของ Splunk ทำงานซ้อนกับของเรา** [3] คำสั่งที่ไม่ปลอดภัยหรือทำลายข้อมูลจะไม่ถูกรัน,
   search หยุดที่ 1 นาที และคืนได้ไม่เกิน 1000 event
-- `splunk_run_query` ไม่รับช่วงเวลาเป็น argument ถ้า Text-to-SPL ไม่ได้ใส่ช่วงเวลามา Backend
+- ถ้า Text-to-SPL ไม่ได้ใส่ช่วงเวลามา connector
   จะเขียนช่วงเวลาของ alert ลงใน SPL เป็น `earliest=`/`latest=` แบบ epoch ให้
 
-ทั้ง `spl-guard.ts` และ guardrail ของ Splunk ไม่ใช่ตัวควบคุมหลัก
+ทั้ง `spl.check_readonly` ของ connector และ guardrail ของ Splunk ไม่ใช่ตัวควบคุมหลัก
 **role ของ token ต้องเขียนข้อมูลและอ่าน index อื่นไม่ได้อยู่ดี** (หัวข้อ 2)
 
 ---
@@ -351,8 +369,10 @@ guard) หรือ `refused` (เหตุผลที่ guard ไม่ให
 
 | ไฟล์ | หน้าที่ |
 | --- | --- |
-| [`src/modules/enrichment/splunk-mcp.service.ts`](../src/modules/enrichment/splunk-mcp.service.ts) | MCP client: ต่อ, หา tool ทั้งสอง, สร้าง prompt แล้วทำ generate → ตรวจ → รัน |
-| [`src/modules/enrichment/spl-guard.ts`](../src/modules/enrichment/spl-guard.ts) | ตรวจ SPL ระหว่างสอง call และใส่ช่วงเวลาของ alert ถ้า SPL ยังไม่มี |
+| [`src/modules/enrichment/splunk-mcp.service.ts`](../src/modules/enrichment/splunk-mcp.service.ts) | MCP client ของ connector: ต่อ, เรียก `splunk_lookup` / `splunk_text_to_spl` |
+| [`MCP-Server/Splunk/lookup.py`](../../MCP-Server/Splunk/lookup.py) | สร้าง prompt, ใส่ช่วงเวลาของ alert ถ้า SPL ยังไม่มี, ตัดแถว, เรียงคำตอบ |
+| [`MCP-Server/Splunk/spl.py`](../../MCP-Server/Splunk/spl.py) | ตรวจ SPL ก่อนรัน (`check_readonly`) |
+| [`MCP-Server/Splunk/saia.py`](../../MCP-Server/Splunk/saia.py) | ส่งต่อ Text-to-SPL ไป Splunk AI Assistant เมื่อตั้ง `SPLUNK_SAIA_MCP_URL` |
 | [`src/modules/queue/lookup.processor.ts`](../src/modules/queue/lookup.processor.ts) | stage 2: หนึ่ง MCP session ต่อ lookup และหนึ่งคำตอบต่อ requirement |
 | [`src/scripts/splunk-mcp-check.ts`](../src/scripts/splunk-mcp-check.ts) | สคริปต์ที่ job ในหัวข้อ 5 รัน |
 | [`scripts/splunk-probe.sh`](../scripts/splunk-probe.sh) | step 7 ของ `deploy_production`: network แบบไม่ตรวจ cert แล้วตามด้วย cert |

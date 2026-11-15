@@ -53,9 +53,9 @@ FortiSOAR ──► soc-core-api ──► BullMQ ──► soc-core-worker
                     soc-ai ──► Agent-Server: soc-suggest (suggestion), soc-requirements (คำถามถึง Splunk)
                                             │
                        stage 2 (ปุ่ม / auto) ▼
-                       requirement (ข้อความ) ──MCP──► saia_generate_spl ──► SPL
-                                  spl-guard ตรวจ ──MCP──► splunk_run_query ──► Splunk
-                                            │          (Splunk MCP Server app บน search head)
+                       requirement ──MCP──► splunk_lookup (connector soc-mcp-splunk, repo MCP-Server)
+                                            │   connector: prompt ──► Text-to-SPL ──► ตรวจ ──► รันบน Splunk
+                                            │   (Splunk container, หรือ Splunk ของบริษัท)
                                             ▼
                     soc-ai ──► Agent-Server: soc-conclude (บทวิเคราะห์จากผลค้น)
 ```
@@ -66,7 +66,7 @@ FortiSOAR ──► soc-core-api ──► BullMQ ──► soc-core-worker
 **model ตัดสินใจเรื่องเดียว** — หลักฐานพอหรือยัง ต้องค้น log เพิ่มไหม
 
 **model ของเราไม่เขียน query** — stage 2 ส่ง requirement เป็นข้อความให้ Text-to-SPL
-ของ Splunk เขียน SPL แล้ว `spl-guard.ts` ตรวจก่อนรันทุกครั้ง (อ่านอย่างเดียว) เพราะ SPL เขียน
+ของ Splunk เขียน SPL แล้ว `spl.check_readonly` ของ connector ตรวจก่อนรันทุกครั้ง (อ่านอย่างเดียว) เพราะ SPL เขียน
 และลบข้อมูลได้ และ alert text เป็นของที่ผู้โจมตีแต่งได้ index ที่ค้นได้คุมด้วย role ของ token
 ใน Splunk ซึ่งต้องเขียนข้อมูลไม่ได้อยู่ดี ดู [splunk-mcp.md](splunk-mcp.md) หัวข้อ 2
 

@@ -2,9 +2,9 @@
 
 เอกสารนี้สำหรับตอนผลค้น Splunk บน production ดูผิด แล้วต้องหาว่าผิดตรงไหน
 
-Stage 2 คุยกับ Splunk ผ่าน MCP: Backend ส่ง requirement เป็น**ข้อความ**ไปที่ `saia_generate_spl`
-(Text-to-SPL ของ Splunk) ได้ SPL กลับมา ตรวจด้วย [`spl-guard.ts`](../src/modules/enrichment/spl-guard.ts)
-แล้วรันด้วย `splunk_run_query` บน Splunk MCP Server app ดังนั้นคำถามแรกคือ
+Stage 2 คุยกับ Splunk ผ่าน MCP: Backend ส่ง requirement ไปที่ `splunk_lookup` ของ connector
+(`soc-mcp-splunk`, repo MCP-Server) connector สร้าง prompt ให้ Text-to-SPL เขียน SPL ตรวจด้วย
+[`spl.check_readonly`](../../MCP-Server/Splunk/spl.py) แล้วรันบน Splunk ดังนั้นคำถามแรกคือ
 **"Splunk เขียน SPL อะไร และรันได้ผลตรงที่เราคิดไหม"** ซึ่งตอบได้โดยไม่ต้องใช้ model ของเราเลย
 
 ---
@@ -21,7 +21,7 @@ Stage 2 คุยกับ Splunk ผ่าน MCP: Backend ส่ง requiremen
 
 | อาการ | แปลว่า |
 | --- | --- |
-| ชั้น 1 ได้ข้อมูล, ชั้น 2 ไม่ได้ | Text-to-SPL ใช้ชื่อ field หรือ index ที่ข้อมูลไม่ได้ใช้, role ของ service account อ่าน index นั้นไม่ได้, หรือ `spl-guard` ปฏิเสธ SPL (ดู `error`) |
+| ชั้น 1 ได้ข้อมูล, ชั้น 2 ไม่ได้ | Text-to-SPL ใช้ชื่อ field หรือ index ที่ข้อมูลไม่ได้ใช้, role ของ service account อ่าน index นั้นไม่ได้, หรือ `spl.check_readonly` ของ connector ปฏิเสธ SPL (ดู `error`) |
 | ชั้น 2 ได้ข้อมูล, ชั้น 3 ไม่ได้ | requirement ที่ agent เขียน หรือ index/sourcetype/field ที่ catalogue แนบไปผิด — ดู `prompt`, `index`, `sourcetype` ใน `lookup_result` |
 | ทั้งสามได้ข้อมูล แต่ analyst อ่านผิด | การ render คำตอบ หรือ agent วิเคราะห์ (`soc-conclude`) — ไม่ใช่ Splunk |
 | ชั้น 1 ก็ไม่ได้ | SPL ผิด หรือไม่มีข้อมูลจริง |
@@ -133,8 +133,8 @@ if fa: print(); print('analysis:', fa['status'], fa.get('error') or fa.get('reas
 
 SPL ทุกอันผ่านสามชั้นก่อนถึงข้อมูล:
 
-1. `spl-guard.ts` ใน Backend ปฏิเสธคำสั่งที่เขียน ลบ หรือส่งข้อมูลออก (`delete`, `collect`, `outputlookup`, …)
-   ก่อนส่ง `splunk_run_query` และเติมช่วงเวลาของ alert ถ้า SPL ยังไม่มี
+1. `spl.check_readonly` ใน connector (MCP-Server/Splunk) ปฏิเสธคำสั่งที่เขียน ลบ หรือส่งข้อมูลออก (`delete`, `collect`, `outputlookup`, …)
+   ก่อนรัน และเติมช่วงเวลาของ alert ถ้า SPL ยังไม่มี
 2. guardrail ของ Splunk MCP Server เอง: คำสั่งที่ไม่ปลอดภัยไม่ถูกรัน, search หยุดที่ 1 นาที, ไม่เกิน 1000 event
 3. role ของ service account ใน Splunk: ไม่มี capability สำหรับเขียน และอ่านได้เฉพาะ index ที่อนุญาต
 
