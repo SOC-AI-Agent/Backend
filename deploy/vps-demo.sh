@@ -68,11 +68,56 @@ kept() {
   sed -n "s/^$key=//p" "$file" | tail -n 1
 }
 
+sync_env_kv() {
+  local dst="$1"
+  shift
+  python3 - "$dst" "$@" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+pairs = {}
+for item in sys.argv[2:]:
+    k, _, v = item.partition("=")
+    pairs[k] = v
+
+lines = path.read_text().splitlines() if path.exists() else []
+seen = set()
+updated = []
+changed = False
+for line in lines:
+    stripped = line.lstrip()
+    if "=" in line and not stripped.startswith("#"):
+        k, _, old = line.partition("=")
+        k_clean = k.strip()
+        if k_clean in pairs:
+            seen.add(k_clean)
+            if old != pairs[k_clean]:
+                updated.append(f"{k_clean}={pairs[k_clean]}")
+                changed = True
+                continue
+    updated.append(line)
+
+for k, v in pairs.items():
+    if k not in seen:
+        updated.append(f"{k}={v}")
+        changed = True
+
+if changed:
+    path.write_text("\n".join(updated) + "\n")
+    print(f"  {path.parent.name}: synced shared keys ({', '.join(pairs.keys())})")
+PY
+}
+
 write_env() {
   local dir="$1" src="$REPOS/$1/.env.example" dst="$REPOS/$1/.env"
+  shift
   [ -f "$src" ] || { echo "  $dir: no .env.example, skipped"; return; }
   if [ -f "$dst" ] && [ "$FORCE" = 0 ]; then
     echo "  $dir: .env exists, kept (--force to overwrite)"
+    if [ $# -gt 0 ]; then
+      sync_env_kv "$dst" "$@"
+    fi
     return
   fi
   : > "$dst"
@@ -165,17 +210,23 @@ THREATQ_BASE_URL="" \
 SPLUNK_LOOKUP_MODE="${SPLUNK_LOOKUP_MODE:-manual}" \
 OLLAMA_MODEL="$PRIMARY_MODEL" \
 ALLOWED_ORIGINS="http://${VPS_HOST}:3002,http://localhost:3002,http://soc-frontend" \
-  write_env Backend
+  write_env Backend \
+    "AI_SERVICE_AUTH_TOKEN=$AI_TOKEN" \
+    "MCP_AUTH_TOKEN=$MCP_TOKEN" \
+    "ALLOWED_ORIGINS=http://${VPS_HOST}:3002,http://localhost:3002,http://soc-frontend"
 
 # AI-Service/.env
 AI_SERVICE_AUTH_TOKEN="$AI_TOKEN" \
 LLM_SERVER_URL="http://host.docker.internal:8001" \
-  write_env AI-Service
+  write_env AI-Service \
+    "AI_SERVICE_AUTH_TOKEN=$AI_TOKEN" \
+    "LLM_SERVER_URL=http://host.docker.internal:8001"
 
 # MCP-Server/.env
 MCP_AUTH_TOKEN="$MCP_TOKEN" \
 CONFLUENCE_MCP_AUTH_TOKEN="$CONFLUENCE_MCP_TOKEN" \
-  write_env MCP-Server
+  write_env MCP-Server \
+    "MCP_AUTH_TOKEN=$MCP_TOKEN"
 
 # MCP-Server/external/splunk/.env
 SPLUNK_PASSWORD="$SPLUNK_ADMIN_PASS" \
@@ -190,7 +241,13 @@ LLM_BASE_URL="$LLM_BASE_URL_VAL" \
 LLM_API_KEY="$LLM_API_KEY_VAL" \
 LLM_PROVIDER="$LLM_PROVIDER_VAL" \
 LLM_MODELS="$LLM_MODELS_VAL" \
-  write_env Agent-Server
+  write_env Agent-Server \
+    "NEXT_PUBLIC_BASE_URL=http://${VPS_HOST}:8001" \
+    "NEXT_PUBLIC_LLM_BASE_URL=http://${VPS_HOST}:8080" \
+    "LLM_BASE_URL=$LLM_BASE_URL_VAL" \
+    "LLM_API_KEY=$LLM_API_KEY_VAL" \
+    "LLM_PROVIDER=$LLM_PROVIDER_VAL" \
+    "LLM_MODELS=$LLM_MODELS_VAL"
 
 # Persist demo admin credentials locally (gitignored via *.env)
 cat > "$CREDS_FILE" <<EOF
