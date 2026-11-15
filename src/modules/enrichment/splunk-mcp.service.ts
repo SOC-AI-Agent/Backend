@@ -91,6 +91,8 @@ export interface SplunkSession {
    * it, checks it and runs it instead of writing its own.
    */
   ask(question: SplunkQuestion, written?: string): Promise<SplunkAnswer>;
+  /** Rows of one search, checked read-only by the connector; null when it has no tool for that. */
+  run(spl: string): Promise<Array<Record<string, unknown>> | null>;
   /** What to show an agent that writes the SPL; null when the connector has no such tool. */
   writerPrompt(question: SplunkQuestion): Promise<string | null>;
   /** Only the first half of ask: Text-to-SPL and the guard. Nothing is searched. */
@@ -127,7 +129,7 @@ export class SplunkMcpService {
   }
 
   async connect(): Promise<SplunkSession> {
-    const { token, timeoutMs, lookupTool, textToSplTool, promptTool } = this.config.get('splunk');
+    const { token, timeoutMs, lookupTool, textToSplTool, promptTool, runTool } = this.config.get('splunk');
     const url = this.endpoint();
     const client = new Client({ name: 'soc-backend', version: '1.0.0' });
     const transport = new StreamableHTTPClientTransport(url, {
@@ -183,6 +185,13 @@ export class SplunkMcpService {
           answer: got.answer ?? '',
           writtenBy: got.written_by,
         };
+      },
+      run: async (spl: string): Promise<Array<Record<string, unknown>> | null> => {
+        if (!tools.includes(runTool)) return null;
+        const got = await client
+          .callTool({ name: runTool, arguments: { query: spl } }, undefined, { timeout: timeoutMs })
+          .then((r) => payloadOf(r, runTool));
+        return Array.isArray(got?.results) ? got.results : [];
       },
       writerPrompt: async (q: SplunkQuestion): Promise<string | null> => {
         // An older connector without the tool is not an error: it writes the SPL itself.

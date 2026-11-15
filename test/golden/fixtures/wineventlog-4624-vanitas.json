@@ -1,0 +1,25 @@
+{
+  "_comment": "Golden: what is extracted from this real event must be aimable in its own index. See test/golden/golden.test.js.",
+  "index": "main",
+  "sourcetype": "wineventlog",
+  "raw": "12/24/2024 09:04:26 AM\nLogName=Security\nEventCode=4624\nEventType=0\nComputerName=KBTG-Bootcamp\nSourceName=Microsoft Windows security auditing.\nType=Information\nRecordNumber=16142\nKeywords=Audit Success\nTaskCategory=Logon\nOpCode=Info\nMessage=An account was successfully logged on.\r\n\r\nSubject:\r\n\tSecurity ID:\t\tS-1-0-0\r\n\tAccount Name:\t\t-\r\n\tAccount Domain:\t\t-\r\n\tLogon ID:\t\t0x0\r\n\r\nLogon Information:\r\n\tLogon Type:\t\t3\r\n\tRestricted Admin Mode:\t-\r\n\tVirtual Account:\t\tNo\r\n\tElevated Token:\t\tYes\r\n\r\nImpersonation Level:\t\tImpersonation\r\n\r\nNew Logon:\r\n\tSecurity ID:\t\tS-1-5-21-1826897636-2806653855-114302692-1000\r\n\tAccount Name:\t\tvanitas\r\n\tAccount Domain:\t\tKBTG-BOOTCAMP\r\n\tLogon ID:\t\t0x55C21E7\r\n\tLinked Logon ID:\t\t0x0\r\n\tNetwork Account Name:\t-\r\n\tNetwork Account Domain:\t-\r\n\tLogon GUID:\t\t{00000000-0000-0000-0000-000000000000}\r\n\r\nProcess Information:\r\n\tProcess ID:\t\t0x0\r\n\tProcess Name:\t\t-\r\n\r\nNetwork Information:\r\n\tWorkstation Name:\t-\r\n\tSource Network Address:\t192.168.56.129\r\n\tSource Port:\t\t36848\r\n\r\nDetailed Authentication Information:\r\n\tLogon Process:\t\tNtLmSsp \r\n\tAuthentication Package:\tNTLM\r\n\tTransited Services:\t-\r\n\tPackage Name (NTLM only):\tNTLM V2\r\n\tKey Length:\t\t0\r\n\r\nThis event is generated when a logon session is created. It is generated on the computer that was accessed.\r\n\r\nThe subject fields indicate the account on the local system which requested the logon. This is most commonly a service such as the Server service, or a local process such as Winlogon.exe or Services.exe.\r\n\r\nThe logon type field indicates the kind of logon that occurred. The most common types are 2 (interactive) and 3 (network).\r\n\r\nThe New Logon fields indicate the account for whom the new logon was created, i.e. the account that was logged on.\r\n\r\nThe network fields indicate where a remote logon request originated. Workstation name is not always available and may be left blank in some cases.\r\n\r\nThe impersonation level field indicates the extent to which a process in the logon session can impersonate.\r\n\r\nThe authentication information fields provide detailed information about this specific logon request.\r\n\t- Logon GUID is a unique identifier that can be used to correlate this event with a KDC event.\r\n\t- Transited services indicate which intermediate services have participated in this logon request.\r\n\t- Package name indicates which sub-protocol was used among the NTLM protocols.\r\n\t- Key length indicates the length of the generated session key. This will be 0 if no session key was requested.",
+  "expect": [
+    {
+      "type": "ip",
+      "value": "192.168.56.129",
+      "fields": [
+        "Source_Network_Address"
+      ]
+    },
+    {
+      "type": "host",
+      "value": "KBTG-Bootcamp",
+      "fields": [
+        "ComputerName"
+      ]
+    }
+  ],
+  "unaimedTypes": {
+    "file": "Winlogon.exe / Services.exe come from the 4624 explanatory text, not the event; wineventlog has no file field"
+  }
+}

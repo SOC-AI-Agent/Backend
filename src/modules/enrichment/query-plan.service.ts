@@ -277,6 +277,7 @@ export class QueryPlanService implements OnModuleInit {
         scope: where.scope,
         fields: where.fields,
         unscoped: where.fields.length === 0,
+        ...(where.via ? { aimedBy: where.via } : {}),
         // Roles become field names here, where the catalogue is. A plan that
         // said `dest_ip` is only runnable once something turns that into
         // whatever this estate calls it.

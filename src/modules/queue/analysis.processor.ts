@@ -11,6 +11,7 @@ import { ModelRequirement, parseRequirements, parseSuggestion } from '../ai/requ
 import { CatalogService } from '../enrichment/catalog.service';
 import { dropFields } from '../enrichment/drop-fields';
 import { EnrichmentService } from '../enrichment/enrichment.service';
+import { FieldProbeService } from '../enrichment/field-probe.service';
 import { AuditService } from '../audit/audit.service';
 import { ANALYSIS_QUEUE, AnalyzeAlertPayload } from './analysis-job.payload';
 import { LOOKUP_QUEUE, RUN_LOOKUP_JOB, SplunkLookupPayload } from './lookup-job.payload';
@@ -40,6 +41,7 @@ export class AnalysisProcessor extends WorkerHost {
     private readonly ai: AiService,
     private readonly enrichment: EnrichmentService,
     private readonly catalog: CatalogService,
+    private readonly probe: FieldProbeService,
     private readonly audit: AuditService,
     private readonly config: ConfigService,
     @InjectQueue(LOOKUP_QUEUE) private readonly lookupQueue: Queue<SplunkLookupPayload>,
@@ -192,7 +194,8 @@ export class AnalysisProcessor extends WorkerHost {
     const known = [
       ...enrichment.indicators.map((i) => ({ type: i.type, value: i.value, source: i.source })),
       ...enrichment.skipped
-        .filter((s: any) => s.type && s.reason !== 'placeholder value, not an indicator')
+        // Jobs from before `searchable` existed: anything typed but a placeholder.
+        .filter((s: any) => s.type && (s.searchable ?? s.reason !== 'placeholder value, not an indicator'))
         .map((s: any) => ({
           type: s.type,
           value: s.value,
@@ -246,6 +249,11 @@ export class AnalysisProcessor extends WorkerHost {
     // presence would make an empty model reply look like a full plan.
     const fromPlaybook = enrichment.lookups.filter((l: any) => l.scope === 'playbook');
     const finalPlan = [...fromPlaybook, ...body].slice(0, maxRequirements);
+
+    // What the catalogue could not place, Splunk is asked about: one small search
+    // per sourcetype and type, cached, capped per job.
+    const probed = await this.probe.aimUnaimed(jobId, finalPlan, enrichment.source ?? {});
+    if (probed > 0) this.logger.log(`Job ${jobId}: ${probed} lookup(s) aimed by probing Splunk`);
 
     const unaimed = finalPlan.filter((l: any) => l.indicatorType && l.unscoped);
     if (unaimed.length > 0) {
@@ -313,6 +321,7 @@ export class AnalysisProcessor extends WorkerHost {
         scope: where.scope,
         fields: where.fields,
         unscoped: where.fields.length === 0,
+        ...(where.via ? { aimedBy: where.via } : {}),
         ...details,
         ...(fieldHints.length ? { fieldHints } : {}),
         ...window,

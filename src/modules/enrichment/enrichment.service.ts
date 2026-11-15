@@ -65,13 +65,7 @@ export class EnrichmentService {
     // model cannot start until the whole block is ready anyway.
     const playbook = await this.playbook.match(alertName);
     const searchableSkipped = skipped
-      .filter(
-        (s) =>
-          s.reason === 'private or non-routable address' ||
-          s.reason.startsWith('listed as internal') ||
-          s.reason === 'local endpoint artifact' ||
-          s.reason === 'relative URI path',
-      )
+      .filter((s) => s.searchable)
       .map((s) => ({ type: s.type, value: s.value, source: 'internal' }));
     const lookups = this.queryPlan.build(
       [...indicators, ...searchableSkipped], source, alertName, rawLog, resolvedTime, playbook,

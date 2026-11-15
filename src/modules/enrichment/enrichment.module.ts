@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 
 import { CatalogService } from './catalog.service';
 import { EnrichmentService } from './enrichment.service';
+import { FieldProbeService } from './field-probe.service';
 import { IocService } from './ioc.service';
 import { PlaybookSyncService } from './playbook-sync.service';
 import { PlaybookService } from './playbook.service';
@@ -15,9 +16,9 @@ import { ThreatQService } from './threatq.service';
   imports: [HttpModule],
   providers: [
     CatalogService, IocService, ThreatQService, SourceMapService, QueryPlanService,
-    SplunkMcpService, PlaybookService, PlaybookSyncService,
+    SplunkMcpService, PlaybookService, PlaybookSyncService, FieldProbeService,
     EnrichmentService,
   ],
-  exports: [EnrichmentService, IocService, CatalogService, SplunkMcpService, PlaybookService],
+  exports: [EnrichmentService, IocService, CatalogService, SplunkMcpService, PlaybookService, FieldProbeService],
 })
 export class EnrichmentModule {}

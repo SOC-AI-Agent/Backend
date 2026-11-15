@@ -1,0 +1,129 @@
+{
+  "_comment": [
+    "Every kind of indicator the backend knows, in one place. IocService extracts with it,",
+    "CatalogService aims with it, ThreatQService decides what to ask about with it.",
+    "Adding a type is an edit here plus, for each sourcetype that carries it, a role",
+    "in splunk-catalog.json — no code. test/golden checks the two agree on real logs.",
+    "",
+    "Per type:",
+    "  logFields     key=value names in a raw log that carry this type (lower case)",
+    "  pattern       free-text regex (scanned in scanOrder; flags 'gi' unless patternFlags)",
+    "  roles         catalogue roles a value of this type can sit in",
+    "  cim           common field names to try when a sourcetype has no role for it;",
+    "                used only when the catalogue lists the field for that sourcetype",
+    "  threatIntel   ask ThreatQ about it",
+    "  local         a local artifact: never sent to threat intel, still searched in Splunk",
+    "  skip          rules that drop a value (see SKIP_RULES in indicator-registry.ts)",
+    "  reclassify    a match that is really another type ({to, suffixes})",
+    "  hostAs        the host part of a match is also an indicator of this type",
+    "  notInside     ignore matches inside a match of this type"
+  ],
+  "keyValuePattern": "\\b([a-zA-Z][\\w.-]{1,40})\\s*=\\s*\"?([^\"\\s,;]{1,512})\"?",
+  "scanOrder": ["url", "email", "hash", "ip", "domain"],
+  "types": {
+    "ip": {
+      "logFields": ["srcip", "dstip", "src_ip", "dest_ip", "source_ip", "destination_ip", "src", "dest",
+                    "clientip", "client_ip", "remote_ip", "ip", "transip", "source_network_address"],
+      "pattern": "\\b(?:(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)\\b",
+      "patternFlags": "g",
+      "roles": ["src_ip", "dest_ip"],
+      "cim": ["src_ip", "dest_ip", "src", "dest", "clientip"],
+      "threatIntel": true,
+      "skip": ["private_ip", "internal"]
+    },
+    "url": {
+      "logFields": ["url", "uri", "uri_path", "referer", "request"],
+      "pattern": "\\bhttps?:\\/\\/[^\\s\"'<>\\\\]{4,2048}",
+      "roles": ["url"],
+      "cim": ["url", "uri_path", "uri"],
+      "threatIntel": true,
+      "hostAs": "domain",
+      "skip": ["xml_namespace_url", "relative_path"]
+    },
+    "email": {
+      "logFields": ["sender", "recipient", "from", "to", "email", "mail_from"],
+      "pattern": "\\b[\\w.+-]{1,64}@[\\w-]{1,63}(?:\\.[\\w-]{1,63})+\\b",
+      "patternFlags": "g",
+      "roles": ["email"],
+      "cim": ["recipient", "sender", "src_user"],
+      "threatIntel": true,
+      "skip": ["internal"]
+    },
+    "hash": {
+      "logFields": ["md5", "sha1", "sha256", "hash", "file_hash", "filehash"],
+      "pattern": "\\b(?:[a-f0-9]{32}|[a-f0-9]{40}|[a-f0-9]{64})\\b",
+      "roles": ["hash"],
+      "cim": ["hash", "md5", "sha1", "sha256", "SHA256", "file_hash"],
+      "threatIntel": true
+    },
+    "domain": {
+      "logFields": ["domain", "query", "dns_query", "url_domain", "fqdn", "cs-host"],
+      "pattern": "\\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,24}\\b",
+      "roles": ["domain"],
+      "cim": ["query", "dest_host", "url_domain", "domain"],
+      "threatIntel": true,
+      "notInside": "url",
+      "reclassify": {
+        "to": "file",
+        "suffixes": [".bin", ".exe", ".dll", ".zip", ".rar", ".7z", ".gz", ".tar", ".doc", ".docx",
+                     ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".js", ".vbs", ".ps1", ".bat", ".cmd",
+                     ".jar", ".msi", ".iso", ".img", ".dat", ".tmp", ".log", ".txt", ".csv", ".png",
+                     ".jpg", ".jpeg", ".gif", ".svg", ".html", ".htm", ".php", ".asp", ".aspx", ".jsp"]
+      },
+      "skip": [
+        "xml_namespace_domain",
+        {"rule": "suffix", "reason": "non-routable domain suffix",
+         "suffixes": [".local", ".internal", ".lan", ".corp", ".home.arpa"]},
+        "not_resolvable",
+        "internal"
+      ]
+    },
+    "user": {
+      "logFields": ["user", "username", "user_name", "src_user", "account", "account_name", "samaccountname"],
+      "roles": ["user"],
+      "cim": ["user", "src_user", "Account_Name", "User"],
+      "skip": ["internal"]
+    },
+    "host": {
+      "logFields": ["host", "hostname", "computer", "computername", "devname", "dvc"],
+      "roles": ["host"],
+      "cim": ["Computer", "ComputerName", "dvc", "devname", "hostname"],
+      "local": true
+    },
+    "process": {
+      "logFields": ["process", "process_name", "image", "parentimage", "service_file_name"],
+      "roles": ["process"],
+      "cim": ["process", "process_name", "Image"],
+      "local": true
+    },
+    "service": {
+      "logFields": ["service_name"],
+      "roles": ["service"],
+      "cim": ["Service_Name", "service"],
+      "local": true
+    },
+    "file": {
+      "logFields": ["file", "file_name", "filename", "targetfilename", "originalfilename"],
+      "roles": ["file"],
+      "cim": ["file_name", "file", "filename", "TargetFilename"],
+      "local": true
+    }
+  },
+  "detailKeys": {
+    "source": ["src_ip"], "src": ["src_ip"], "src_ip": ["src_ip"], "source_ip": ["src_ip"],
+    "destination": ["dest_ip"], "dest": ["dest_ip"], "dst": ["dest_ip"], "dest_ip": ["dest_ip"],
+    "ip": ["src_ip", "dest_ip"],
+    "src_port": ["src_port"], "dest_port": ["dest_port"], "port": ["dest_port"],
+    "user": ["user"], "username": ["user"], "user_name": ["user"], "account": ["user"],
+    "device": ["host"], "host": ["host"], "hostname": ["host"],
+    "domain": ["domain"],
+    "url": ["url"], "uri": ["url"], "uri_path": ["url"],
+    "file": ["file"], "file_name": ["file"], "filename": ["file"],
+    "hash": ["hash"], "md5": ["hash"], "sha1": ["hash"], "sha256": ["hash"],
+    "process": ["process"], "image": ["process"],
+    "service": ["service"],
+    "action": ["action"]
+  },
+  "_addressKeys": "Keys that name an address only when the value is one: a host name under 'source' is not a src_ip.",
+  "addressKeys": ["source", "src", "destination", "dest", "dst"]
+}

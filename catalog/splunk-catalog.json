@@ -9,7 +9,7 @@
     "'roles' is the important part — it maps a meaning to this sourcetype's",
     "field name. The backend searches on it, so a filter gets built on 'srcip'",
     "rather than on a CIM name that does not exist here.",
-    "Roles: src_ip dest_ip src_port dest_port user host hash domain action",
+    "Roles: src_ip dest_ip src_port dest_port user host hash domain url file process service action",
     "",
     "Keep it short. It is read on every run that touches Splunk, and every token",
     "here is one taken away from the alert."
@@ -23,7 +23,7 @@
           "purpose": "Apache access log of the web server. One line per HTTP request.",
           "roles": {
             "src_ip": "clientip",
-            "url": "uri_path",
+            "url": "uri_path", "file": "file",
             "action": "status"
           },
           "fields": [
@@ -43,7 +43,7 @@
             "user": "User",
             "host": "Computer",
             "hash": "SHA256",
-            "process": "Image"
+            "process": "Image", "file": "TargetFilename"
           },
           "fields": [
             "EventCode", "Computer", "User", "Image", "CommandLine", "CurrentDirectory",
@@ -95,7 +95,7 @@
             "dest_port": "dstport",
             "user": "user",
             "action": "action",
-            "host": "devname"
+            "host": "devname", "file": "filename"
           },
           "fields": [
             "srcip", "srcport", "dstip", "dstport", "proto",

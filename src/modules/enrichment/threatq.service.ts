@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 
+import { indicatorRegistry } from './indicator-registry';
 import { Indicator } from './ioc.service';
 
 export interface ThreatQRecord {
@@ -73,9 +74,8 @@ export class ThreatQService {
   }
 
   async lookup(indicators: Indicator[]): Promise<ThreatQResult> {
-    const lookupable = indicators.filter((i) =>
-      ['ip', 'domain', 'url', 'hash', 'email'].includes(i.type),
-    );
+    const types = indicatorRegistry().types;
+    const lookupable = indicators.filter((i) => types[i.type]?.threatIntel);
 
     if (!this.enabled) {
       return { available: false, hits: [], checked: 0, error: 'ThreatQ is not configured' };

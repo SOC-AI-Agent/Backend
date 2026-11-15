@@ -78,6 +78,10 @@ export class SplunkRequirementResponse {
   @ApiPropertyOptional()
   unscoped?: boolean;
 
+  /** How the fields were found: `role` (the catalogue), `cim` (a common name the catalogue lists), `probe` (a search for the value). */
+  @ApiPropertyOptional({ enum: ['role', 'cim', 'probe'] })
+  aimedBy?: string;
+
   /** The window, anchored to when the alert fired rather than to when the search runs. */
   @ApiPropertyOptional({ example: '2026-09-20T10:00:00Z' })
   earliest?: string;

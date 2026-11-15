@@ -1,0 +1,38 @@
+{
+  "_comment": "Golden: what is extracted from this real event must be aimable in its own index. See test/golden/golden.test.js.",
+  "index": "main",
+  "sourcetype": "fortigate",
+  "raw": "date=2026-09-21 time=07:20:31 devname=\"FGT-01\" type=\"traffic\" subtype=\"forward\" level=\"alert\" srcip=10.1.100.11 srcport=51020 dstip=45.83.122.9 dstport=8443 proto=6 action=\"blocked\" service=\"HTTPS\" dstcountry=\"Russia\" sentbyte=2000 rcvdbyte=0 user=\"jdoe\"",
+  "expect": [
+    {
+      "type": "ip",
+      "value": "45.83.122.9",
+      "fields": [
+        "srcip",
+        "dstip"
+      ]
+    },
+    {
+      "type": "ip",
+      "value": "10.1.100.11",
+      "fields": [
+        "srcip",
+        "dstip"
+      ]
+    },
+    {
+      "type": "user",
+      "value": "jdoe",
+      "fields": [
+        "user"
+      ]
+    },
+    {
+      "type": "host",
+      "value": "FGT-01",
+      "fields": [
+        "devname"
+      ]
+    }
+  ]
+}

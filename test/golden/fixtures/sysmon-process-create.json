@@ -1,0 +1,15 @@
+{
+  "_comment": "Golden: what is extracted from this real event must be aimable in its own index. See test/golden/golden.test.js.",
+  "index": "main",
+  "sourcetype": "sysmon",
+  "raw": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Sysmon' Guid='{5770385f-c22a-43e0-bf4c-06f5698ffbd9}'/><EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords><TimeCreated SystemTime='2024-12-24T17:58:32.9991081Z'/><EventRecordID>45241</EventRecordID><Correlation/><Execution ProcessID='4600' ThreadID='1452'/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>KBTG-Bootcamp</Computer><Security UserID='S-1-5-18'/></System><EventData><Data Name='RuleName'>-</Data><Data Name='UtcTime'>2024-12-24 17:58:32.998</Data><Data Name='ProcessGuid'>{679a8f89-f648-676a-b208-000000000c00}</Data><Data Name='ProcessId'>6192</Data><Data Name='Image'>C:\\Program Files\\SplunkUniversalForwarder\\bin\\splunk-regmon.exe</Data><Data Name='FileVersion'>9.4.0</Data><Data Name='Description'>Registry monitor</Data><Data Name='Product'>splunk Application</Data><Data Name='Company'>Splunk Inc.</Data><Data Name='OriginalFileName'>splunk-regmon.exe</Data><Data Name='CommandLine'>\"C:\\Program Files\\SplunkUniversalForwarder\\bin\\splunk-regmon.exe\"</Data><Data Name='CurrentDirectory'>C:\\Windows\\system32\\</Data><Data Name='User'>NT AUTHORITY\\SYSTEM</Data><Data Name='LogonGuid'>{679a8f89-83c2-676a-e703-000000000000}</Data><Data Name='LogonId'>0x3e7</Data><Data Name='TerminalSessionId'>0</Data><Data Name='IntegrityLevel'>System</Data><Data Name='Hashes'>MD5=3552CF79AB64C8D77F0FE99435C051C5,SHA256=8D0096CE6993E7E130C93189CA7997CD72B792ADA05F019E87AF6B98F99199AC,IMPHASH=E8E9F11A78EDDE4C2D11503F46FC5C2F</Data><Data Name='ParentProcessGuid'>{679a8f89-e28d-676a-2906-000000000c00}</Data><Data Name='ParentProcessId'>4268</Data><Data Name='ParentImage'>C:\\Program Files\\SplunkUniversalForwarder\\bin\\splunkd.exe</Data><Data Name='ParentCommandLine'>\"C:\\Program Files\\SplunkUniversalForwarder\\bin\\splunkd.exe\" service</Data><Data Name='ParentUser'>NT AUTHORITY\\SYSTEM</Data></EventData></Event>",
+  "expect": [
+    {
+      "type": "hash",
+      "value": "8D0096CE6993E7E130C93189CA7997CD72B792ADA05F019E87AF6B98F99199AC",
+      "fields": [
+        "SHA256"
+      ]
+    }
+  ]
+}

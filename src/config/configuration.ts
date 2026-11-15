@@ -200,6 +200,8 @@ export default () => ({
     textToSplTool: process.env.SPLUNK_MCP_TEXT_TO_SPL_TOOL ?? 'splunk_text_to_spl',
     /** What to show an agent that writes the SPL. Only called when LLM_SPL_AGENT is set. */
     promptTool: process.env.SPLUNK_MCP_PROMPT_TOOL ?? 'splunk_prompt',
+    /** Runs one checked, read-only search. Used to find which field a value is in. */
+    runTool: process.env.SPLUNK_MCP_RUN_TOOL ?? 'splunk_run_query',
     // One MCP tool call, which is Text-to-SPL and the search together. Splunk AI
     // Assistant takes tens of seconds; Splunk's own guardrail stops a search at
     // one minute.
@@ -230,6 +232,16 @@ export default () => ({
     maxRequirements: toInt(process.env.SPLUNK_LOOKUP_MAX_REQUIREMENTS, 5),
     /** Whether to add the "how often this alert fired" frequency lookup (requires Splunk ES `notable` or a dedicated alert index). */
     alertFrequency: toBool(process.env.SPLUNK_ALERT_FREQUENCY, true),
+    /**
+     * When the catalogue has no field for a value, run one small search for it in
+     * the alert's index and sourcetype and aim at the field it turns up in
+     * (enrichment/field-probe.service.ts). Off sends such values as quoted terms.
+     */
+    fieldProbe: toBool(process.env.SPLUNK_FIELD_PROBE, true),
+    /** At most this many probe searches per job; answers are cached per sourcetype and type. */
+    maxProbes: toInt(process.env.SPLUNK_FIELD_PROBE_MAX, 3),
+    /** How long a found field is trusted, in hours. */
+    probeCacheMs: toInt(process.env.SPLUNK_FIELD_PROBE_CACHE_HOURS, 6) * 3_600_000,
   },
   retention: {
     jobsDays: toInt(process.env.RETENTION_DAYS_JOBS, 30),

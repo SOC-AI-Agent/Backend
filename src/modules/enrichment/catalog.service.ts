@@ -1,6 +1,8 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { readFileSync } from 'node:fs';
 
+import { indicatorRegistry } from './indicator-registry';
+
 /**
  * The data catalogue, read here so a search can be aimed before a model sees it.
  *
@@ -30,42 +32,12 @@ export interface IndexEntry {
   sourcetypes?: Record<string, SourcetypeEntry>;
 }
 
-/**
- * Which roles a detail under a requirement names, by its key. The requirements
- * agent labels each detail (`device: FGT-01`, `user: j.smith`); this is what turns
- * the label into this estate's field name. A key not listed gets no field hint —
- * the detail is still sent to Text-to-SPL, just without a field.
- */
-const DETAIL_ROLES: Record<string, string[]> = {
-  source: ['src_ip'], src: ['src_ip'], src_ip: ['src_ip'], source_ip: ['src_ip'],
-  destination: ['dest_ip'], dest: ['dest_ip'], dst: ['dest_ip'], dest_ip: ['dest_ip'],
-  ip: ['src_ip', 'dest_ip'],
-  src_port: ['src_port'], dest_port: ['dest_port'], port: ['dest_port'],
-  user: ['user'], username: ['user'], user_name: ['user'], account: ['user'],
-  device: ['host'], host: ['host'], hostname: ['host'],
-  domain: ['domain'],
-  url: ['url'], uri: ['url'], uri_path: ['url'],
-  hash: ['hash'], md5: ['hash'], sha1: ['hash'], sha256: ['hash'],
-  process: ['process'], image: ['process'],
-  service: ['service'],
-  action: ['action'],
-};
-// `source` and `destination` name an address only when the value is one; a host
-// name under either key is not a src_ip.
-const ADDRESS_KEYS = new Set(['source', 'src', 'destination', 'dest', 'dst']);
+// Which roles a detail key (`device: FGT-01`) or an indicator type names, and the
+// common field names to fall back on, come from catalog/indicator-types.json.
 const ADDRESS = /^(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f]*:[0-9a-f:]+)$/i;
 
-/** Which roles an indicator of each kind could be carried by. */
-const INDICATOR_ROLES: Record<string, string[]> = {
-  ip: ['src_ip', 'dest_ip'],
-  host: ['host'],
-  user: ['user'],
-  hash: ['hash'],
-  domain: ['domain'],
-  url: ['url'],
-  process: ['process'],
-  service: ['service'],
-};
+/** How a set of fields was found: the catalogue's role, or a common name the catalogue lists. */
+export type AimedVia = 'role' | 'cim';
 
 @Injectable()
 export class CatalogService implements OnModuleInit {
@@ -73,6 +45,9 @@ export class CatalogService implements OnModuleInit {
   private indexes: Record<string, IndexEntry> = {};
 
   onModuleInit(): void {
+    // Read the indicator types now: a missing or broken file fails the start, not the first alert.
+    const registry = indicatorRegistry();
+    this.logger.log(`indicator types loaded from ${registry.path}: ${registry.names().join(', ')}`);
     const path = process.env.SPLUNK_CATALOG_FILE ?? '/catalog/splunk-catalog.json';
     try {
       const raw = JSON.parse(readFileSync(path, 'utf8')) as { indexes?: Record<string, IndexEntry> };
@@ -138,7 +113,7 @@ export class CatalogService implements OnModuleInit {
     sourcetype?: string | null,
   ): string[] {
     const fields: string[] = [];
-    for (const role of INDICATOR_ROLES[indicatorType] ?? []) {
+    for (const role of indicatorRegistry().types[indicatorType]?.roles ?? []) {
       for (const field of this.fieldsForRole(role, index, sourcetype)) {
         if (!fields.includes(field)) fields.push(field);
       }
@@ -152,9 +127,10 @@ export class CatalogService implements OnModuleInit {
    * Empty when the key names no role or the catalogue has no field for it.
    */
   fieldsForDetail(key: string, value: string, index?: string | null, sourcetype?: string | null): string[] {
-    const roles = DETAIL_ROLES[key];
+    const registry = indicatorRegistry();
+    const roles = registry.detailKeys[key];
     if (!roles) return [];
-    if (ADDRESS_KEYS.has(key) && !ADDRESS.test(value)) return [];
+    if (registry.addressKeys.has(key) && !ADDRESS.test(value)) return [];
     const fields: string[] = [];
     for (const role of roles) {
       for (const field of this.fieldsForRole(role, index, sourcetype)) {
@@ -186,7 +162,13 @@ export class CatalogService implements OnModuleInit {
     index?: string | null,
     sourcetype?: string | null,
     roles?: string[],
-  ): { fields: string[]; index?: string; sourcetype?: string; scope: 'sourcetype' | 'index' | 'estate' | 'none' } {
+  ): {
+    fields: string[];
+    index?: string;
+    sourcetype?: string;
+    scope: 'sourcetype' | 'index' | 'estate' | 'none';
+    via?: AimedVia;
+  } {
     // `roles` narrows the search to one direction when the caller asked for
     // one: src_ip alone rather than src_ip OR dest_ip. Omitted means every
     // role an indicator of this kind could sit in.
@@ -195,16 +177,26 @@ export class CatalogService implements OnModuleInit {
         ? roles.flatMap((r) => this.fieldsForRole(r, i, st)).filter((f, n, a) => a.indexOf(f) === n)
         : this.fieldsForIndicator(indicatorType, i, st);
 
+    // At each scope the catalogue's role first, then the common names for this
+    // type that the catalogue lists for that sourcetype — a field the catalogue
+    // has not been told the meaning of, but knows is there. Never a common name
+    // the catalogue does not list: searching fields that do not exist is how a
+    // search comes back empty and reads as "nothing found".
+    const cim = (i?: string | null, st?: string | null) => (roles?.length ? [] : this.cimFields(indicatorType, i, st));
     if (index && sourcetype) {
       const fields = fieldsAt(index, sourcetype);
-      if (fields.length > 0) return { fields, index, sourcetype, scope: 'sourcetype' };
+      if (fields.length > 0) return { fields, index, sourcetype, scope: 'sourcetype', via: 'role' };
+      const common = cim(index, sourcetype);
+      if (common.length > 0) return { fields: common, index, sourcetype, scope: 'sourcetype', via: 'cim' };
     }
     if (index) {
       const fields = fieldsAt(index, null);
-      if (fields.length > 0) return { fields, index, scope: 'index' };
+      if (fields.length > 0) return { fields, index, scope: 'index', via: 'role' };
+      const common = cim(index, null);
+      if (common.length > 0) return { fields: common, index, scope: 'index', via: 'cim' };
     }
     const fields = fieldsAt(null, null);
-    if (fields.length > 0) return { fields, scope: 'estate' };
+    if (fields.length > 0) return { fields, scope: 'estate', via: 'role' };
     return { fields: [], scope: 'none' };
   }
 
@@ -217,9 +209,33 @@ export class CatalogService implements OnModuleInit {
    * not exist — returning zero events and a warning nobody was reading.
    */
   missingRoles(index?: string | null, sourcetype?: string | null): string[] {
-    return Object.keys(INDICATOR_ROLES).filter(
+    return indicatorRegistry().names().filter(
       (t) => this.fieldsForIndicator(t, index, sourcetype).length === 0,
     );
+  }
+
+  /** The fields the catalogue lists for a sourcetype, or for every sourcetype in an index. */
+  fieldsOf(index?: string | null, sourcetype?: string | null): string[] {
+    const found: string[] = [];
+    for (const [indexName, indexEntry] of Object.entries(this.indexes)) {
+      if (index && indexName !== index) continue;
+      for (const [stName, st] of Object.entries(indexEntry.sourcetypes ?? {})) {
+        if (sourcetype && stName !== sourcetype) continue;
+        for (const f of st.fields ?? []) if (!found.includes(f)) found.push(f);
+      }
+    }
+    return found;
+  }
+
+  /** The type's common field names that this scope is known to carry, in the registry's order. */
+  private cimFields(indicatorType: string, index?: string | null, sourcetype?: string | null): string[] {
+    const listed = new Map(this.fieldsOf(index, sourcetype).map((f) => [f.toLowerCase(), f]));
+    const fields: string[] = [];
+    for (const name of indicatorRegistry().types[indicatorType]?.cim ?? []) {
+      const field = listed.get(name.toLowerCase());
+      if (field && !fields.includes(field)) fields.push(field);
+    }
+    return fields.slice(0, 4);
   }
 
   /** What a sourcetype is for, when the catalogue says. */
