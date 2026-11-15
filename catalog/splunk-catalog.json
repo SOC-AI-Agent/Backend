@@ -23,6 +23,7 @@
           "purpose": "Apache access log of the web server. One line per HTTP request.",
           "roles": {
             "src_ip": "clientip",
+            "url": "uri_path",
             "action": "status"
           },
           "fields": [
@@ -41,7 +42,8 @@
           "roles": {
             "user": "User",
             "host": "Computer",
-            "hash": "SHA256"
+            "hash": "SHA256",
+            "process": "Image"
           },
           "fields": [
             "EventCode", "Computer", "User", "Image", "CommandLine", "CurrentDirectory",
@@ -65,7 +67,9 @@
             "src_ip": "Source_Network_Address",
             "src_port": "Source_Port",
             "user": "Account_Name",
-            "host": "ComputerName"
+            "host": "ComputerName",
+            "process": "Service_File_Name",
+            "service": "Service_Name"
           },
           "fields": [
             "EventCode", "LogName", "ComputerName", "Account_Name", "Account_Domain",

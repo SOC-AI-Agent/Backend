@@ -126,6 +126,39 @@
         ],
         "span": "1h"
       }
+    },
+    {
+      "indicator_type": "process",
+      "requirement": "where else the executable {value} ran or was installed in the 24 hours around the alert",
+      "because": "process {value} (from {source})",
+      "roles": [
+        "process"
+      ],
+      "hours_before": 24,
+      "max": 2,
+      "rank": 1
+    },
+    {
+      "indicator_type": "service",
+      "requirement": "what service events exist for {value} in the 24 hours around the alert",
+      "because": "service {value} (from {source})",
+      "roles": [
+        "service"
+      ],
+      "hours_before": 24,
+      "max": 2,
+      "rank": 2
+    },
+    {
+      "indicator_type": "url",
+      "requirement": "which clients requested {value} in the 24 hours around the alert",
+      "because": "url {value} (from {source})",
+      "roles": [
+        "url"
+      ],
+      "hours_before": 24,
+      "max": 2,
+      "rank": 2
     }
   ]
 }

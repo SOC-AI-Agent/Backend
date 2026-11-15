@@ -191,9 +191,13 @@ export class AnalysisProcessor extends WorkerHost {
     // come back unaimable.
     const known = [
       ...enrichment.indicators.map((i) => ({ type: i.type, value: i.value, source: i.source })),
-      ...enrichment.skipped.map((s: any) => ({
-        type: s.type, value: s.value, source: 'skipped for intel, still searchable',
-      })).filter((s: any) => s.type),
+      ...enrichment.skipped
+        .filter((s: any) => s.type && s.reason !== 'placeholder value, not an indicator')
+        .map((s: any) => ({
+          type: s.type,
+          value: s.value,
+          source: 'skipped for intel, still searchable',
+        })),
     ];
 
     // A second call, to a second agent, that reads the suggestion as well as the
@@ -264,7 +268,7 @@ export class AnalysisProcessor extends WorkerHost {
   private aim(requirements: ModelRequirement[], enrichment: any) {
     const source = enrichment.source;
     const window = this.window(enrichment.alertTime ?? new Date());
-    return requirements.map((r) => {
+    const aimed = requirements.map((r) => {
       // The details the agent listed under the question, and which field each
       // one sits in here, when the catalogue knows. Both go to Text-to-SPL with
       // the question.
@@ -314,6 +318,25 @@ export class AnalysisProcessor extends WorkerHost {
         ...window,
       };
     });
+
+    // Drop duplicate questions that resolve to the exact same search target
+    // (same index, sourcetype, indicator, and fieldHints), unless one is an
+    // aggregate ("how many", "count", "top") and the other is an event list.
+    const seenSearch = new Set<string>();
+    return aimed.filter((item) => {
+      if (!('indicator' in item) || !item.indicator || item.unscoped) return true;
+      const isAgg = /\b(how many|count|top|most|frequen|which (?:hosts?|address|destinations?|ports?)|talk(?:ed|ing)? to|connect(?:ed|ions?)? to|destinations?|distinct)\b/i.test(
+        item.requirement,
+      );
+      const hintsSig = (item.fieldHints ?? [])
+        .map((h) => `${h.value}:${h.fields.join(',')}`)
+        .sort()
+        .join(';');
+      const sig = `${item.index ?? ''}|${item.sourcetype ?? ''}|${item.indicator}|${hintsSig}|${isAgg ? 'agg' : 'list'}`;
+      if (seenSearch.has(sig)) return false;
+      seenSearch.add(sig);
+      return true;
+    });
   }
 
   /**
@@ -329,7 +352,25 @@ export class AnalysisProcessor extends WorkerHost {
     sourcetype?: string,
   ): Array<{ value: string; fields: string[] }> {
     const hints: Array<{ value: string; fields: string[] }> = [];
-    if (r.indicator && indicatorFields.length) hints.push({ value: r.indicator, fields: indicatorFields });
+    if (r.indicator && indicatorFields.length) {
+      hints.push({ value: r.indicator, fields: indicatorFields });
+      // When the primary indicator is already placed in its resolved field(s),
+      // only add `device`/`host` context if the search is scoped to a single
+      // sourcetype AND the indicator itself is not already a host. Adding every
+      // other indicator (`user` + `source` + `device` all ANDed together) turns
+      // a pivot search ("what else did IP X or user Y do?") into an intersection
+      // that only matches the original alert event itself, or 0 rows when
+      // widening across sourcetypes.
+      if (sourcetype && r.indicatorType !== 'host') {
+        for (const [key, value] of Object.entries(r.context ?? {})) {
+          if (!['device', 'host', 'hostname'].includes(key)) continue;
+          if (hints.some((h) => h.value === value)) continue;
+          const fields = this.catalog.fieldsForDetail(key, value, index, sourcetype);
+          if (fields.length) hints.push({ value, fields });
+        }
+      }
+      return hints;
+    }
     for (const [key, value] of Object.entries(r.context ?? {})) {
       if (hints.some((h) => h.value === value)) continue;
       const fields = this.catalog.fieldsForDetail(key, value, index, sourcetype);

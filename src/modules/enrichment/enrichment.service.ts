@@ -56,6 +56,7 @@ export class EnrichmentService {
     // it, so pressing the button a day later still looks where the alert is.
     alertTime: Date = new Date(),
   ): Promise<Enrichment> {
+    const resolvedTime = this.parseLogTime(rawLog) ?? alertTime;
     const { indicators: fromSoar } = this.ioc.normalise(supplied);
     const { indicators, skipped } = this.ioc.extract(rawLog, fromSoar);
     const threatq = await this.threatq.lookup(indicators);
@@ -64,17 +65,72 @@ export class EnrichmentService {
     // model cannot start until the whole block is ready anyway.
     const playbook = await this.playbook.match(alertName);
     const searchableSkipped = skipped
-      .filter((s) => s.reason === 'private or non-routable address' || s.reason.startsWith('listed as internal'))
+      .filter(
+        (s) =>
+          s.reason === 'private or non-routable address' ||
+          s.reason.startsWith('listed as internal') ||
+          s.reason === 'local endpoint artifact' ||
+          s.reason === 'relative URI path',
+      )
       .map((s) => ({ type: s.type, value: s.value, source: 'internal' }));
     const lookups = this.queryPlan.build(
-      [...indicators, ...searchableSkipped], source, alertName, rawLog, alertTime, playbook,
+      [...indicators, ...searchableSkipped], source, alertName, rawLog, resolvedTime, playbook,
     );
     this.logger.log(
       `extracted ${indicators.length} indicators (${skipped.length} skipped), ` +
         `ThreatQ ${threatq.available ? `checked ${threatq.checked}, ${threatq.hits.length} hits` : 'unavailable'}, `
         + `${lookups.length} lookups suggested`,
     );
-    return { indicators, skipped, threatq, source, lookups, alertTime, playbook };
+    return { indicators, skipped, threatq, source, lookups, alertTime: resolvedTime, playbook };
+  }
+
+  /**
+   * Read the event's own timestamp out of the raw log when present (ISO 8601 /
+   * Sysmon SystemTime, Apache CLF, or Windows Event Log header), so historical
+   * or replayed alerts search around when the event happened rather than now.
+   */
+  private parseLogTime(rawLog: string): Date | null {
+    // 1. ISO 8601 (e.g. Sysmon SystemTime='2024-12-24T17:01:41.1280062Z')
+    const iso = rawLog.match(
+      /\b(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2}))\b/,
+    );
+    if (iso) {
+      const d = new Date(iso[1].replace(/\.(\d{3})\d*/, '.$1'));
+      if (!Number.isNaN(d.getTime())) return d;
+    }
+
+    // 2. Apache / NCSA Combined Log Format: [24/Dec/2024:08:47:37 -0800]
+    const clf = rawLog.match(
+      /\[(\d{2})\/([A-Za-z]{3})\/(\d{4}):(\d{2}:\d{2}:\d{2})\s+([+-]\d{2})(\d{2})\]/,
+    );
+    if (clf) {
+      const months: Record<string, string> = {
+        jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+        jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
+      };
+      const mon = months[clf[2].toLowerCase()];
+      if (mon) {
+        const d = new Date(`${clf[3]}-${mon}-${clf[1]}T${clf[4]}${clf[5]}:${clf[6]}`);
+        if (!Number.isNaN(d.getTime())) return d;
+      }
+    }
+
+    // 3. Windows Event Log header: 12/24/2024 09:04:26 AM (lab TZ: UTC-8)
+    const win = rawLog.match(
+      /\b(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})\s+([AP]M)\b/i,
+    );
+    if (win) {
+      const mm = win[1].padStart(2, '0');
+      const dd = win[2].padStart(2, '0');
+      let hh = Number.parseInt(win[4], 10);
+      const ampm = win[7].toUpperCase();
+      if (ampm === 'PM' && hh < 12) hh += 12;
+      if (ampm === 'AM' && hh === 12) hh = 0;
+      const d = new Date(`${win[3]}-${mm}-${dd}T${String(hh).padStart(2, '0')}:${win[5]}:${win[6]}-08:00`);
+      if (!Number.isNaN(d.getTime())) return d;
+    }
+
+    return null;
   }
 
   /**

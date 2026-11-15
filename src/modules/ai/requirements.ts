@@ -52,19 +52,17 @@ export interface ModelRequirement {
 export function requirementsFormat(limit: number): string {
   return [
     '--- ANSWER FORMAT ---',
-    `List what to ask Splunk, at most ${limit} items. For each one write:`,
-    '- the question, one line, naming the value it is about',
-    '- then, one per line, every detail from the alert above that helps find it, as `key: value`',
+    `List what to ask Splunk, at most ${limit} distinct items. For each one write:`,
+    '- the question, one line, naming the exact indicator value it is about (do not ask multiple questions about the same value unless narrowing by a different detail)',
+    '- then, one per line, only the detail(s) from the alert above needed to scope that search, as `key: value`',
     '  (keys such as: device, source, destination, domain, url, user, user_agent, host,',
-    '  hash, process, signature, type, action). Copy each value exactly as it appears',
-    '  above. Leave out a detail the alert does not have — never invent one.',
+    '  hash, process, signature, type, action). Copy each value verbatim as a single value',
+    '  from the alert above. Never write `-`, `none`, `N/A`, or invent a value.',
     '',
     'Example of the shape (the values here are not from this alert):',
     '1. What else did 203.0.113.7 touch in the 24 hours around the alert',
     '   source: 203.0.113.7',
     '   device: fw-edge-01',
-    '   type: traffic',
-    '   user: a.example',
     '',
     'If nothing needs asking, write: none',
   ].join('\n');
@@ -117,6 +115,8 @@ export function parseSuggestion(reply: string): ParsedSuggestion {
   return { suggestion: body || text, malformed: false };
 }
 
+const PLACEHOLDER_DETAIL = /^(?:[-–—]+|none|n\/?a|null|unknown|not[_\s-]*(?:available|applicable|specified|present)|tbd|\?+)$/i;
+
 /** `key: value` when the line is a detail, normalised; null when it is not one. */
 function detailOf(line: string): { key: string; value: string } | null {
   const match = DETAIL.exec(line);
@@ -130,7 +130,8 @@ function detailOf(line: string): { key: string; value: string } | null {
     .replace(/[.;,]+$/, '')
     .trim()
     .slice(0, MAX_DETAIL_CHARS);
-  return value ? { key, value } : null;
+  if (!value || PLACEHOLDER_DETAIL.test(value)) return null;
+  return { key, value };
 }
 
 /**
@@ -160,9 +161,14 @@ export function parseRequirements(
   const body = header ? text.slice(header.index + header[0].length) : text;
   const haystack = shown?.toLowerCase();
 
-  // Longest first, so "10.1.100.44" is preferred over a shorter value that
-  // happens to be a substring of it.
-  const byLength = [...known].sort((a, b) => b.value.length - a.value.length);
+  // Specific indicators (ip, hash, user, url, process, service, domain) beat
+  // ambient host/device names when a question mentions both ("What other activity
+  // has the user vanitas performed on KBTG-Bootcamp"); within the same tier,
+  // longest first so "10.1.100.44" beats a shorter substring.
+  const priority = (t: string) => (t === 'host' ? 1 : 0);
+  const byLength = [...known].sort(
+    (a, b) => priority(a.type) - priority(b.type) || b.value.length - a.value.length,
+  );
 
   type Draft = { requirement: string; context: Record<string, string>; dropped: string[] };
   const drafts: Draft[] = [];

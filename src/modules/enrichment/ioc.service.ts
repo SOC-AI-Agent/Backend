@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-export type IndicatorType = 'ip' | 'domain' | 'url' | 'hash' | 'email' | 'user';
+export type IndicatorType = 'ip' | 'domain' | 'url' | 'hash' | 'email' | 'user' | 'host' | 'process' | 'service';
 
 export interface Indicator {
   type: IndicatorType;
@@ -56,12 +56,15 @@ export class IocService {
    *  vendors. A catalog per sourcetype would be better; this is the floor. */
   private static readonly FIELD_HINTS: Record<IndicatorType, string[]> = {
     ip: ['srcip', 'dstip', 'src_ip', 'dest_ip', 'source_ip', 'destination_ip', 'src', 'dest',
-         'clientip', 'client_ip', 'remote_ip', 'ip', 'transip'],
-    domain: ['domain', 'query', 'dns_query', 'url_domain', 'fqdn', 'hostname', 'cs-host'],
-    url: ['url', 'uri', 'referer', 'request'],
+         'clientip', 'client_ip', 'remote_ip', 'ip', 'transip', 'source_network_address'],
+    domain: ['domain', 'query', 'dns_query', 'url_domain', 'fqdn', 'cs-host'],
+    url: ['url', 'uri', 'uri_path', 'referer', 'request'],
     hash: ['md5', 'sha1', 'sha256', 'hash', 'file_hash', 'filehash'],
     email: ['sender', 'recipient', 'from', 'to', 'email', 'mail_from'],
-    user: ['user', 'username', 'user_name', 'src_user', 'account', 'samaccountname'],
+    user: ['user', 'username', 'user_name', 'src_user', 'account', 'account_name', 'samaccountname'],
+    host: ['host', 'hostname', 'computer', 'computername', 'devname', 'dvc'],
+    process: ['process', 'process_name', 'image', 'parentimage', 'service_file_name'],
+    service: ['service_name'],
   };
 
   // Suffixes that appear in log text but are never something to look up.
@@ -185,12 +188,29 @@ export class IocService {
   }
 
   private skipReason(type: IndicatorType, value: string): string | null {
+    if (/^(?:not_translated|-|none|n\/?a|unknown|null)$/i.test(value)) {
+      return 'placeholder value, not an indicator';
+    }
+    if (type === 'host' || type === 'process' || type === 'service') {
+      return 'local endpoint artifact';
+    }
+    if (type === 'url') {
+      if (/^https?:\/\/(?:schemas\.microsoft\.com|www\.w3\.org)\b/i.test(value)) {
+        return 'XML schema namespace, not a URL indicator';
+      }
+      if (value.startsWith('/')) {
+        return 'relative URI path';
+      }
+    }
     if (type === 'ip') {
       if (this.isPrivate(value)) return 'private or non-routable address';
       if (this.isInternal(value)) return 'listed as internal infrastructure';
     }
     if (type === 'domain') {
       const lower = value.toLowerCase();
+      if (lower === 'schemas.microsoft.com' || lower === 'www.w3.org') {
+        return 'XML schema namespace, not a domain';
+      }
       if (IocService.NON_ROUTABLE_SUFFIX.some((s) => lower.endsWith(s))) {
         return 'non-routable domain suffix';
       }

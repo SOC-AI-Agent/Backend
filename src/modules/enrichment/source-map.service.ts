@@ -57,7 +57,7 @@ export class SourceMapService {
    * Extend through ALERT_SOURCE_SIGNATURES rather than editing this.
    */
   private static readonly SIGNATURES: Array<{
-    requires: string[]; domain: string; sourcetype?: string; family: string;
+    requires: string[]; domain: string; sourcetype?: string; index?: string; family: string;
   }> = [
     { requires: ['eventsource', 'awsregion', 'eventversion'],
       domain: 'cloud', sourcetype: 'aws:cloudtrail', family: 'AWS CloudTrail' },
@@ -67,6 +67,8 @@ export class SourceMapService {
       domain: 'cloud', sourcetype: 'google:gcp:pubsub:message', family: 'GCP audit' },
     { requires: ['winlog.event_id', 'winlog.channel'],
       domain: 'endpoint', sourcetype: 'XmlWinEventLog', family: 'Windows event log' },
+    { requires: ['logname', 'eventcode', 'computername'],
+      domain: 'endpoint', index: 'main', sourcetype: 'wineventlog', family: 'Windows event log' },
   ];
 
   // Present in almost every log, so useless for telling one family from
@@ -183,10 +185,34 @@ export class SourceMapService {
       if (sig.requires.every((f) => present.has(f))) {
         return {
           domain: sig.domain,
+          index: (sig as { index?: string }).index,
           sourcetype: sig.sourcetype,
           from: `field signature (${sig.family}: ${sig.requires.join(' + ')})`,
         };
       }
+    }
+
+    // Sysmon XML (<Provider Name='Microsoft-Windows-Sysmon'...>) and Apache
+    // Combined Log Format carry no flat key=value pairs for those names.
+    if (/Microsoft-Windows-Sysmon/i.test(rawLog) && /<EventID>\d+<\/EventID>/i.test(rawLog)) {
+      return {
+        domain: 'endpoint',
+        index: 'main',
+        sourcetype: 'sysmon',
+        from: 'Sysmon XML envelope',
+      };
+    }
+    if (
+      /^\S+\s+\S+\s+\S+\s+\[\d{2}\/[A-Za-z]{3}\/\d{4}:\d{2}:\d{2}:\d{2}\s+[+-]\d{4}\]\s+"[A-Z]+\s+\S+/m.test(
+        rawLog,
+      )
+    ) {
+      return {
+        domain: 'network',
+        index: 'main',
+        sourcetype: 'access_combined',
+        from: 'Apache combined log format',
+      };
     }
 
     // Nothing structured. Fall back to matching the configured patterns.

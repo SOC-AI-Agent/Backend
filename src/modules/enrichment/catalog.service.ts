@@ -44,7 +44,10 @@ const DETAIL_ROLES: Record<string, string[]> = {
   user: ['user'], username: ['user'], user_name: ['user'], account: ['user'],
   device: ['host'], host: ['host'], hostname: ['host'],
   domain: ['domain'],
+  url: ['url'], uri: ['url'], uri_path: ['url'],
   hash: ['hash'], md5: ['hash'], sha1: ['hash'], sha256: ['hash'],
+  process: ['process'], image: ['process'],
+  service: ['service'],
   action: ['action'],
 };
 // `source` and `destination` name an address only when the value is one; a host
@@ -59,6 +62,9 @@ const INDICATOR_ROLES: Record<string, string[]> = {
   user: ['user'],
   hash: ['hash'],
   domain: ['domain'],
+  url: ['url'],
+  process: ['process'],
+  service: ['service'],
 };
 
 @Injectable()
