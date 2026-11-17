@@ -19,6 +19,9 @@ import { ThreatQService } from './threatq.service';
     SplunkMcpService, PlaybookService, PlaybookSyncService, FieldProbeService,
     EnrichmentService,
   ],
-  exports: [EnrichmentService, IocService, CatalogService, SplunkMcpService, PlaybookService, FieldProbeService],
+  exports: [
+    EnrichmentService, IocService, CatalogService, SplunkMcpService, PlaybookService,
+    PlaybookSyncService, FieldProbeService,
+  ],
 })
 export class EnrichmentModule {}

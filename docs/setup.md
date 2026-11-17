@@ -273,6 +273,17 @@ worker อ่าน playbook ทั้ง space จาก Confluence REST API �
 alert ดูผลได้ที่ส่วน playbook ของ job แรก ถ้าขึ้นว่ายังไม่มีอะไร index แปลว่า `CONFLUENCE_*` ยังไม่ครบ
 หรือ sync รอบแรกยังไม่เสร็จ
 
+ดูสถานะและสั่ง sync ทันทีได้โดยไม่ต้องรอรอบถัดไป (เช่น หลังแก้ playbook ใน Confluence):
+
+| ทางไหน | ทำอะไร |
+| --- | --- |
+| Dashboard → การ์ด **Playbook Index** | แสดงจำนวน playbook, vector ใน Qdrant, เวลาที่ index ล่าสุด และ `CONFLUENCE_*` ที่ยังขาด; admin กด **Sync from Confluence** ได้ |
+| `GET /admin/playbooks` | สถานะเดียวกันเป็น JSON; `confluence.missing` บอกตัวแปรที่ยังว่างใน `Backend/.env` |
+| `POST /admin/playbooks/sync` (admin) | อ่าน Confluence ทั้ง space แล้ว index/embed ทันที ตอบจำนวนหน้า, playbook, field ที่ embed; 400 ถ้า `CONFLUENCE_*` ไม่ครบ, 409 ถ้ามี sync ค้างอยู่, 502 ถ้า Confluence หรือ soc-ai fail (index เดิมยังอยู่) |
+
+บน VPS (`deploy/vps-demo.sh`) ส่ง `CONFLUENCE_*` เป็น environment ตอนรันสคริปต์ได้ ค่าจะถูกเขียนลง
+`Backend/.env` แม้ไฟล์มีอยู่แล้ว
+
 playbook ที่ match ได้จะถูกส่งให้ model เป็นท่อนๆ ที่มี tag (`[PB:true]`, `[PB:false]`, `[PB:step 2]`)
 พร้อมกฎว่าให้ตอบจาก playbook เท่านั้น และให้ cite tag ทุกครั้ง worker จะตรวจคำตอบ (verdict ต้อง cite
 `[PB:true]`/`[PB:false]`, step ต้องมีจริง, ข้อความที่ quote ต้องอยู่ใน playbook) ถ้าไม่ผ่านจะถาม model ใหม่

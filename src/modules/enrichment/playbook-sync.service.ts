@@ -37,8 +37,9 @@ export interface PlaybookPage {
  * A failed sync changes nothing on soc-ai: it keeps serving the last index, and
  * PlaybookService says so on every match until a sync succeeds again.
  *
- * Worker only. The API process never matches a playbook, and a sync per API
- * replica would be the same work several times over.
+ * The timer runs in the worker only: a sync per API replica would be the same
+ * work several times over. The API calls sync() only when an admin asks for one
+ * (POST /admin/playbooks/sync), e.g. right after a playbook was edited.
  */
 @Injectable()
 export class PlaybookSyncService implements OnApplicationBootstrap, OnModuleDestroy {
@@ -54,11 +55,12 @@ export class PlaybookSyncService implements OnApplicationBootstrap, OnModuleDest
 
   onApplicationBootstrap(): void {
     if (process.env.APP_ROLE !== 'worker') return;
-    const { confluence, syncMinutes } = this.config.get('playbook');
-    if (!confluence.baseUrl || !confluence.apiToken || !confluence.spaceKey) {
+    const { syncMinutes } = this.config.get('playbook');
+    const missing = this.missingConfig();
+    if (missing.length) {
       this.logger.warn(
-        'CONFLUENCE_BASE_URL, CONFLUENCE_API_TOKEN or CONFLUENCE_SPACE_KEY is unset: playbooks ' +
-          'are not synced, and every match will say nothing is indexed',
+        `${missing.join(', ')} unset: playbooks are not synced, and every match will say ` +
+          'nothing is indexed',
       );
       return;
     }
@@ -71,6 +73,23 @@ export class PlaybookSyncService implements OnApplicationBootstrap, OnModuleDest
 
   onModuleDestroy(): void {
     if (this.timer) clearInterval(this.timer);
+  }
+
+  /** The settings a sync needs that are empty, by their variable names. */
+  missingConfig(): string[] {
+    const { confluence } = this.config.get('playbook');
+    return [
+      ['CONFLUENCE_BASE_URL', confluence.baseUrl],
+      ['CONFLUENCE_SPACE_KEY', confluence.spaceKey],
+      ['CONFLUENCE_API_TOKEN', confluence.apiToken],
+    ]
+      .filter(([, value]) => !value)
+      .map(([name]) => name);
+  }
+
+  /** A sync is under way in this process. */
+  get busy(): boolean {
+    return this.running;
   }
 
   /** The last sync failed, so matches come from the index before it. */

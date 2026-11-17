@@ -18,7 +18,27 @@ export class StatsResponse {
   model: string;
 }
 
+/** Where the playbooks are synced from, as this backend is configured. */
+export class PlaybookSourceResponse {
+  /** CONFLUENCE_BASE_URL, CONFLUENCE_SPACE_KEY and CONFLUENCE_API_TOKEN are all set. */
+  configured: boolean;
+  /** The variables still empty in Backend/.env; a sync cannot run until they are set. */
+  missing: string[];
+
+  @ApiPropertyOptional({ nullable: true })
+  base_url?: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  space_key?: string | null;
+
+  /** Minutes between the worker's syncs. */
+  sync_minutes: number;
+}
+
 export class PlaybookStatusResponse {
+  /** The backend's side: whether it can read Confluence at all. */
+  confluence: PlaybookSourceResponse;
+
   indexed: boolean;
   playbooks: number;
 
@@ -43,4 +63,31 @@ export class PlaybookStatusResponse {
 
   @ApiPropertyOptional({ type: 'object', additionalProperties: true })
   vectordb?: Record<string, unknown>;
+}
+
+/** What one sync did: pages read from Confluence, and what soc-ai indexed and embedded. */
+export class PlaybookSyncResultResponse {
+  ok: boolean;
+
+  @ApiPropertyOptional({ nullable: true })
+  at?: string | null;
+
+  @ApiPropertyOptional()
+  pages?: number;
+
+  @ApiPropertyOptional()
+  playbooks?: number;
+
+  /** Fields embedded into Qdrant by this sync. Unchanged text is reused, not re-embedded. */
+  @ApiPropertyOptional()
+  embedded?: number;
+
+  @ApiPropertyOptional()
+  reused?: number;
+}
+
+export class PlaybookSyncResponse {
+  sync: PlaybookSyncResultResponse;
+  /** The index after the sync, as GET /admin/playbooks shows it. */
+  index: PlaybookStatusResponse;
 }

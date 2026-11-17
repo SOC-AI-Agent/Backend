@@ -204,6 +204,14 @@ DASHBOARD_ADMIN_PASS="${DASHBOARD_ADMIN_PASS:-$(gen_pw)}"
 
 CONFLUENCE_MCP_TOKEN="$(gen_hex)"
 
+# CONFLUENCE_* given to this script go into Backend/.env even when it already
+# exists: without them the worker never syncs, soc-ai's playbook index (Qdrant)
+# stays empty, and no alert gets a playbook as reference.
+CONFLUENCE_PAIRS=()
+for key in CONFLUENCE_BASE_URL CONFLUENCE_SPACE_KEY CONFLUENCE_EMAIL CONFLUENCE_API_TOKEN CONFLUENCE_PROXY; do
+  if [ -n "${!key:-}" ]; then CONFLUENCE_PAIRS+=("$key=${!key}"); fi
+done
+
 # Backend/.env (ThreatQ disabled, Confluence passed through if provided)
 POSTGRES_PASSWORD="$PG_PASS" \
 CORE_DATABASE_URL="postgresql://socai:${PG_PASS}@soc-db:5432/socai" \
@@ -222,7 +230,8 @@ ALLOWED_ORIGINS="http://${VPS_HOST}:3002,http://localhost:3002,http://soc-fronte
     "MCP_AUTH_TOKEN=$MCP_TOKEN" \
     "SPLUNK_ALERT_FREQUENCY=false" \
     "LLM_SPL_AGENT=$SPL_AGENT_VAL" \
-    "ALLOWED_ORIGINS=http://${VPS_HOST}:3002,http://localhost:3002,http://soc-frontend"
+    "ALLOWED_ORIGINS=http://${VPS_HOST}:3002,http://localhost:3002,http://soc-frontend" \
+    ${CONFLUENCE_PAIRS[@]+"${CONFLUENCE_PAIRS[@]}"}
 
 # AI-Service/.env
 AI_SERVICE_AUTH_TOKEN="$AI_TOKEN" \
@@ -574,17 +583,19 @@ Web URLs:
   FortiSOAR Sim    : http://${VPS_HOST}:8090
 
 Next steps:
-  1) Confluence (external + proxy):
-     Edit Backend/.env and set:
-       CONFLUENCE_BASE_URL=...
+  1) Confluence playbooks (the model's reference Use Case / Playbook):
+     Confluence: $( [ ${#CONFLUENCE_PAIRS[@]} -gt 0 ] && echo "set from this run (${#CONFLUENCE_PAIRS[@]} value(s))" || echo "NOT set — the playbook index stays empty" )
+     Either re-run this script with CONFLUENCE_* exported, or edit Backend/.env:
+       CONFLUENCE_BASE_URL=https://<site>.atlassian.net/wiki
        CONFLUENCE_SPACE_KEY=...
        CONFLUENCE_EMAIL=...
        CONFLUENCE_API_TOKEN=...
-       CONFLUENCE_PROXY=http://host.docker.internal:<proxy_port>
-     Then restart & verify:
+       CONFLUENCE_PROXY=          # only if the VPS reaches Confluence through a proxy
+     Then restart, check, and sync now (instead of waiting PLAYBOOK_SYNC_MINUTES):
        cd $HERE
        docker compose -f deploy/vps-demo.yml --project-directory . --env-file .env up -d soc-core-api soc-core-worker
        docker compose -f deploy/vps-demo.yml --project-directory . --env-file .env exec -T soc-core-worker node dist/scripts/confluence-check.js
+       Dashboard → "Sync from Confluence" (admin), or POST http://${VPS_HOST}:8082/admin/playbooks/sync
 
   2) Firewall (UFW) — DO NOT leave Agent-Server (:8001) or Splunk (:8000) open to the public internet without IP allowlist:
        sudo ufw allow OpenSSH
