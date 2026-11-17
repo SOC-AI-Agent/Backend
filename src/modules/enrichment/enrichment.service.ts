@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import { Indicator, IocService } from './ioc.service';
+import { MispService } from './misp.service';
 import { PlaybookMatch, PlaybookService } from './playbook.service';
 import { QueryPlanService, SuggestedLookup } from './query-plan.service';
 import { SourceHint, SourceMapService } from './source-map.service';
@@ -42,6 +43,7 @@ export class EnrichmentService {
   constructor(
     private readonly ioc: IocService,
     private readonly threatq: ThreatQService,
+    private readonly misp: MispService,
     private readonly sourceMap: SourceMapService,
     private readonly queryPlan: QueryPlanService,
     private readonly playbook: PlaybookService,
@@ -60,7 +62,9 @@ export class EnrichmentService {
     const resolvedTime = this.parseLogTime(rawLog) ?? alertTime;
     const { indicators: fromSoar } = this.ioc.normalise(supplied);
     const { indicators, skipped } = this.ioc.extract(rawLog, fromSoar);
-    const threatq = await this.threatq.lookup(indicators);
+    // MISP when it is configured, ThreatQ otherwise: one threat-intelligence
+    // source, so the model never has to reconcile two verdicts on one value.
+    const threatq = await (this.misp.enabled ? this.misp : this.threatq).lookup(indicators);
     // Asked in parallel with nothing, because it is one HTTP call and the
     // model cannot start until the whole block is ready anyway.
     const playbook = await this.playbook.match(alertName, useCaseId);
@@ -75,7 +79,7 @@ export class EnrichmentService {
     );
     this.logger.log(
       `extracted ${indicators.length} indicators (${skipped.length} skipped), ` +
-        `ThreatQ ${threatq.available ? `checked ${threatq.checked}, ${threatq.hits.length} hits` : 'unavailable'}, `
+        `${threatq.source ?? 'ThreatQ'} ${threatq.available ? `checked ${threatq.checked}, ${threatq.hits.length} hits` : 'unavailable'}, `
         + `${lookups.length} lookups suggested`,
     );
     return { indicators, skipped, threatq, source, lookups, alertTime: resolvedTime, playbook };
@@ -162,7 +166,8 @@ export class EnrichmentService {
       );
     }
 
-    lines.push('', '--- THREAT INTELLIGENCE (ThreatQ) ---');
+    const intel = threatq.source ?? 'ThreatQ';
+    lines.push('', `--- THREAT INTELLIGENCE (${intel}) ---`);
     if (!threatq.available) {
       lines.push(
         `NOT CHECKED — ${threatq.error ?? 'lookup unavailable'}.`,
@@ -171,7 +176,7 @@ export class EnrichmentService {
     } else if (threatq.hits.length === 0) {
       lines.push(
         `${threatq.checked} indicator(s) checked, no records found.`,
-        'No record means ThreatQ has not seen it. That is UNKNOWN, not safe —',
+        `No record means ${intel} has not seen it. That is UNKNOWN, not safe —`,
         'threat intelligence trails an attacker, and new infrastructure has no record yet.',
       );
     } else {
@@ -182,6 +187,7 @@ export class EnrichmentService {
           hit.sources?.length ? `${hit.sources.length} source(s): ${hit.sources.join(', ')}` : null,
           hit.adversaries?.length ? `adversary ${hit.adversaries.join(', ')}` : null,
           hit.first_seen ? `first seen ${hit.first_seen}` : null,
+          hit.context ? `context: ${hit.context}` : null,
         ]
           .filter(Boolean)
           .join(', ');

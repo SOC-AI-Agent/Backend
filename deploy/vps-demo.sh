@@ -597,7 +597,15 @@ Next steps:
        docker compose -f deploy/vps-demo.yml --project-directory . --env-file .env exec -T soc-core-worker node dist/scripts/confluence-check.js
        Dashboard → "Sync from Confluence" (admin), or POST http://${VPS_HOST}:8082/admin/playbooks/sync
 
-  2) Firewall (UFW) — DO NOT leave Agent-Server (:8001) or Splunk (:8000) open to the public internet without IP allowlist:
+  2) Threat intelligence — MISP with the lab's IOCs (optional, ~1.5 GB RAM):
+       cd $REPOS/MCP-Server/external/misp
+       cp .env.example .env          # fill passwords/keys; MISP_BASE_URL_PUBLIC=http://${VPS_HOST}:8095
+       docker compose up -d          # first start takes a few minutes
+       python3 setup.py --write-env  # read-only user + IOCs, writes MISP_* into Backend/.env
+       cd $HERE && docker compose -f deploy/vps-demo.yml --project-directory . --env-file .env up -d soc-core-api soc-core-worker
+     MISP's UI listens on 127.0.0.1:8095; reach it with: ssh -L 8095:127.0.0.1:8095 <user>@${VPS_HOST}
+
+  3) Firewall (UFW) — DO NOT leave Agent-Server (:8001) or Splunk (:8000) open to the public internet without IP allowlist:
        sudo ufw allow OpenSSH
        sudo ufw allow 3002/tcp
        # Allow 7100/8000/8001/8082/8090 only from your IP (recommended):

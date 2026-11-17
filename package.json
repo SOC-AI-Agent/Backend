@@ -14,7 +14,7 @@
     "prisma:migrate": "prisma migrate deploy",
     "seed": "node dist/seed.js",
     "test:golden": "nest build && node --test test/golden/golden.test.js test/golden/probe.test.js",
-    "test:unit": "nest build && node --test test/unit/grounding.test.js"
+    "test:unit": "nest build && node --test test/unit/grounding.test.js test/unit/misp.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.1",

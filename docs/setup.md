@@ -83,6 +83,7 @@ deploy ของ Backend สร้าง `.env` จาก `.env.example` โด�
 | `AI_SERVICE_AUTH_TOKEN` | **ต้อง** | ตั้งเป็น group variable ตัวเดียว ใช้ร่วมกับ AI-Service |
 | `SPLUNK_MCP_URL`, `SPLUNK_MCP_TOKEN` (+ `NODE_EXTRA_CA_CERTS` เมื่อ cert ของ 8089 ไม่ได้ออกโดย CA สาธารณะ) | สำหรับ stage 2 | [splunk-mcp.md](splunk-mcp.md) ค่า default ของ `SPLUNK_MCP_URL` ชี้ไปที่ตัวที่ไม่มีบน production ถ้ายังไม่พร้อม ให้ตั้ง `SPLUNK_LOOKUP_MODE=off` |
 | `THREATQ_*` | สำหรับ ThreatQ | [tokens.md ข้อ 3](tokens.md) ถ้าไม่ตั้ง summary จะบอกว่า ThreatQ NOT CHECKED |
+| `MISP_BASE_URL`, `MISP_API_KEY` | ใช้ MISP แทน ThreatQ | ตั้งครบทั้งสองตัวแล้วจะใช้ MISP แทน ThreatQ รัน MISP พร้อม IOC ของ lab ได้ที่ [MCP-Server/external/misp](../../MCP-Server/external/misp/README.md) โดย `setup.py --write-env` เขียนค่าให้เอง |
 | `CONFLUENCE_*` | สำหรับ playbook | [tokens.md ข้อ 3.1](tokens.md) ถ้าไม่ตั้ง ทุก alert จะไม่มี playbook Cloud ออกผ่าน proxy ของ office ให้เอง |
 | `SPLUNK_URL`, `SPLUNK_TOKEN`, `SSL_CERT_FILE` | สำหรับ `export_catalog` | [splunk-catalog.md](splunk-catalog.md) |
 | `BACKEND_HOST_PORT` | ไม่ต้อง (default 8082) | port ของ API บนเครื่อง เปลี่ยนเฉพาะเมื่อ 8082 ถูกใช้ (`inspect_ports` บอก port ที่ว่าง) |

@@ -5,6 +5,7 @@ import { CatalogService } from './catalog.service';
 import { EnrichmentService } from './enrichment.service';
 import { FieldProbeService } from './field-probe.service';
 import { IocService } from './ioc.service';
+import { MispService } from './misp.service';
 import { PlaybookSyncService } from './playbook-sync.service';
 import { PlaybookService } from './playbook.service';
 import { QueryPlanService } from './query-plan.service';
@@ -15,7 +16,7 @@ import { ThreatQService } from './threatq.service';
 @Module({
   imports: [HttpModule],
   providers: [
-    CatalogService, IocService, ThreatQService, SourceMapService, QueryPlanService,
+    CatalogService, IocService, ThreatQService, MispService, SourceMapService, QueryPlanService,
     SplunkMcpService, PlaybookService, PlaybookSyncService, FieldProbeService,
     EnrichmentService,
   ],

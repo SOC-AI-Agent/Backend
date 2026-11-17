@@ -18,9 +18,13 @@ export interface ThreatQRecord {
   attributes?: Record<string, unknown>;
   first_seen?: string;
   last_seen?: string;
+  /** Free-text context the source attached (MISP comments and tags). */
+  context?: string;
 }
 
 export interface ThreatQResult {
+  /** Which platform answered: ThreatQ or MISP. Absent means ThreatQ. */
+  source?: string;
   available: boolean;
   /** Only indicators with a record. An indicator ThreatQ has never seen is not
    *  evidence of anything and does not belong in a findings list. */

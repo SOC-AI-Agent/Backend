@@ -312,5 +312,20 @@ export default () => ({
       // the platform more than the answer is worth.
       maxIndicators: Number.parseInt(process.env.THREATQ_MAX_INDICATORS ?? '25', 10),
     },
+    /**
+     * MISP, the open-source alternative to ThreatQ. When MISP_BASE_URL and
+     * MISP_API_KEY are both set it is the threat-intelligence source, in place of
+     * ThreatQ; blank, ThreatQ (or nothing) as before.
+     */
+    misp: {
+      /** e.g. http://soc-misp:8080 (external/misp, over soc-network). */
+      baseUrl: (process.env.MISP_BASE_URL ?? '').replace(/\/+$/, ''),
+      /** A read-only user's auth key — setup.py creates one; never the admin's. */
+      apiKey: process.env.MISP_API_KEY ?? '',
+      /** false for a self-signed lab instance over https. */
+      verifyTls: (process.env.MISP_VERIFY_TLS ?? 'true').toLowerCase() !== 'false',
+      timeoutMs: toInt(process.env.MISP_LOOKUP_TIMEOUT_MS, 15000),
+      maxIndicators: toInt(process.env.MISP_MAX_INDICATORS, 25),
+    },
   },
 });
