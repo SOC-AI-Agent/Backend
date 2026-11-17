@@ -81,6 +81,13 @@ services:
     restart: unless-stopped
     networks: [soc-network]
 
+  soc-qdrant:
+    image: qdrant/qdrant:v1.15.4
+    container_name: soc-qdrant
+    volumes: [qdrant-data:/qdrant/storage]
+    restart: unless-stopped
+    networks: [soc-network]
+
   # ── Agent platform ──────────────────────────────────────────────────────
   # Agent-Server itself is not a service here — see the note at the top of
   # this file. soc-ai is the thing on soc-network that calls it.
@@ -89,6 +96,8 @@ services:
     container_name: soc-ai
     # No ports: only the backend calls it, over soc-network, with a token.
     env_file: ["${REPOS:-..}/AI-Service/.env"]
+    environment:
+      QDRANT_URL: ${QDRANT_URL:-http://soc-qdrant:6333}
     # The playbook index, so a restart does not embed every page again.
     volumes: [playbook-index:/data]
     # Lets LLM_SERVER_URL=http://host.docker.internal:8001 (AI-Service/.env's
@@ -96,6 +105,7 @@ services:
     # compose, on this same machine.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on: [soc-qdrant]
     restart: unless-stopped
     networks: [soc-network]
 
@@ -136,6 +146,7 @@ volumes:
   postgres-data:
   redis-data:
   playbook-index:
+  qdrant-data:
 
 networks:
   soc-network:

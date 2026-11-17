@@ -57,11 +57,19 @@ services:
     healthcheck: {test: ["CMD", "redis-cli", "ping"], interval: 5s, retries: 10}
     networks: [soc-network]
 
+  soc-qdrant:
+    image: qdrant/qdrant:v1.15.4
+    container_name: soc-qdrant
+    volumes: [dev-qdrant-data:/qdrant/storage]
+    networks: [soc-network]
+
   soc-ai:
     build: ${REPOS:-..}/AI-Service
     container_name: soc-ai
     # No ports: only the backend calls it, over soc-network, with a token.
     env_file: ["${REPOS:-..}/AI-Service/.env"]
+    environment:
+      QDRANT_URL: ${QDRANT_URL:-http://soc-qdrant:6333}
     # The playbook index, so a restart does not embed every page again.
     volumes: [dev-playbook-index:/data]
     # Lets LLM_SERVER_URL=http://host.docker.internal:8001 (AI-Service/.env's
@@ -69,6 +77,7 @@ services:
     # compose, on this same machine.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on: [soc-qdrant]
     networks: [soc-network]
 
   soc-core-api:
@@ -109,6 +118,7 @@ volumes:
   dev-postgres:
   dev-redis:
   dev-playbook-index:
+  dev-qdrant-data:
 
 networks:
   soc-network:

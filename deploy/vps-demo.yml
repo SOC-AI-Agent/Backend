@@ -123,18 +123,35 @@ services:
     restart: unless-stopped
     networks: [soc-network]
 
+  # ── Vector DB (Qdrant) ──────────────────────────────────────────────────
+  soc-qdrant:
+    image: qdrant/qdrant:v1.15.4
+    container_name: soc-qdrant
+    volumes: [qdrant-data:/qdrant/storage]
+    mem_limit: 512m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    networks: [soc-network]
+
   # ── AI Service ──────────────────────────────────────────────────────────
   soc-ai:
     build: ${REPOS:-..}/AI-Service
     container_name: soc-ai
     env_file: ["${REPOS:-..}/AI-Service/.env"]
     environment:
+      QDRANT_URL: ${QDRANT_URL:-http://soc-qdrant:6333}
       OMP_NUM_THREADS: "2"
       MKL_NUM_THREADS: "2"
       TOKENIZERS_PARALLELISM: "false"
     volumes: [playbook-index:/data]
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on: [soc-qdrant]
     mem_limit: 1536m
     cpus: 2.0
     logging:
@@ -213,6 +230,7 @@ volumes:
   postgres-data:
   redis-data:
   playbook-index:
+  qdrant-data:
 
 networks:
   soc-network:
