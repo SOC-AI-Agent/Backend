@@ -92,7 +92,7 @@
     },
     "process": {
       "logFields": ["process", "process_name", "image", "parentimage", "service_file_name"],
-      "roles": ["process"],
+      "roles": ["process", "file"],
       "cim": ["process", "process_name", "Image"],
       "local": true
     },
@@ -104,7 +104,7 @@
     },
     "file": {
       "logFields": ["file", "file_name", "filename", "targetfilename", "originalfilename"],
-      "roles": ["file"],
+      "roles": ["file", "process"],
       "cim": ["file_name", "file", "filename", "TargetFilename"],
       "local": true
     }

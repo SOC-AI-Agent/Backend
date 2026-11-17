@@ -51,6 +51,13 @@ export interface LookupAnswer {
   splAgent?: string;
   /** Why the SPL agent's draft was not the one that ran, when it was tried and dropped. */
   draftError?: string;
+  /**
+   * The search that ran but is not the answer, when the SPL agent's found
+   * nothing: the agent's empty one (the connector's found rows and is the
+   * answer), or the connector's, empty too (both looked; the agent's stands).
+   * An empty answer with this beside it means two searches agreed.
+   */
+  otherSearch?: { spl: string; count: number; writtenBy: string };
   /** The text sent to Text-to-SPL: the requirement, plus where and when to look. */
   prompt?: string;
   /**

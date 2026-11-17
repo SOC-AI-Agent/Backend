@@ -154,6 +154,14 @@ export class LookupAnswerResponse {
   @ApiPropertyOptional()
   draftError?: string;
 
+  /**
+   * When the SPL agent's search found nothing, the other search that was run:
+   * the agent's empty one (the connector's is the answer), or the connector's,
+   * empty too.
+   */
+  @ApiPropertyOptional({ type: 'object', additionalProperties: true })
+  otherSearch?: { spl: string; count: number; writtenBy: string };
+
   /** The text sent to Text-to-SPL: the requirement, plus where and when to look. */
   @ApiPropertyOptional()
   prompt?: string;

@@ -54,6 +54,11 @@ export function renderResults(answers: LookupAnswer[], budget = RESULTS_BUDGET_C
           ? `looked in: ${where || 'the whole estate'}${a.fields?.length ? `, fields ${a.fields.join(' / ')}` : ''}`
           : undefined,
         a.error ? `FAILED: ${a.error}` : cut(a.answer, perResult),
+        // Two differently written searches agreeing on "nothing" is a firmer
+        // absence than one search that may have used the wrong field.
+        !a.error && a.otherSearch && a.otherSearch.writtenBy !== 'agent'
+          ? 'checked twice: a second, differently written search found nothing either'
+          : undefined,
       ];
       return lines.filter(Boolean).join('\n');
     })

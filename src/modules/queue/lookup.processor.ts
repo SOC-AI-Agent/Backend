@@ -174,7 +174,32 @@ export class LookupProcessor extends WorkerHost {
             );
           }
         }
-        const byAgent = asked !== undefined;
+        // Nothing found by the agent's search is not yet "nothing there": its SPL
+        // may have used the wrong field or a path without its wildcard. The
+        // connector's own search, written from the catalogue, gets a second look,
+        // and both are recorded so an empty answer says what was tried.
+        let byAgent = asked !== undefined;
+        let otherSearch: LookupAnswer['otherSearch'];
+        if (asked && asked.count === 0) {
+          try {
+            const own = await session.ask(plan);
+            if (own.spl !== asked.spl) {
+              if (own.count > 0) {
+                this.logger.log(
+                  `Lookup for ${jobId}: the SPL agent's search for "${plan.requirement.slice(0, 60)}" found ` +
+                    `nothing; the connector's found ${own.count} — using it`,
+                );
+                otherSearch = { spl: asked.spl, count: 0, writtenBy: 'agent' };
+                asked = own;
+                byAgent = false;
+              } else {
+                otherSearch = { spl: own.spl, count: 0, writtenBy: own.writtenBy ?? 'template' };
+              }
+            }
+          } catch {
+            // The agent's empty answer stands; the second look is a bonus.
+          }
+        }
         asked ??= await session.ask(plan);
         answers.push({
           requirement: plan.requirement,
@@ -186,6 +211,7 @@ export class LookupProcessor extends WorkerHost {
           writtenBy: byAgent ? 'agent' : asked.writtenBy,
           ...(draft ? { splAgent: this.config.get<string>('ai.splAgent') } : {}),
           ...(!byAgent && draftError ? { draftError } : {}),
+          ...(otherSearch ? { otherSearch } : {}),
           prompt: asked.prompt,
           spl: asked.spl,
           count: asked.count,
