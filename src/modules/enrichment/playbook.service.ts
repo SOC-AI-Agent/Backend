@@ -4,8 +4,10 @@ import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 
 import { bearer } from '../ai/ai.service';
+import { passages } from '../ai/grounding';
 import { CatalogService } from './catalog.service';
 import { PlaybookSyncService } from './playbook-sync.service';
+import { SourceHint } from './source-map.service';
 
 /**
  * The playbook covering this alert, fetched before any model runs.
@@ -49,14 +51,22 @@ export interface Playbook {
   target_audience?: string;
   contact?: string;
   splunk_query?: PlaybookQuery | null;
+  /** work_around, one step per line. Cited as [PB:step N]; requirements say which step they serve. */
+  steps?: string[];
+  /** The detection rule's SPL, as the page holds it. Read, never run. */
+  detection_spl?: string;
+  /** The indexes and sourcetypes that SPL names, checked against the catalogue before use. */
+  detection_scope?: { index?: string[]; sourcetype?: string[] };
 }
 
 export interface PlaybookMatch {
   matched: boolean;
   /**
-   * id | exact | fuzzy | semantic | miss | empty | unindexed | error. `id` is
-   * the use case code, the surest of them. Fuzzy and semantic are guesses that
-   * cleared a threshold, and they say so.
+   * id | exact | fuzzy | semantic | miss | use_case_mismatch | empty |
+   * unindexed | error. `id` is the use case code, the surest of them. Fuzzy and
+   * semantic are guesses that cleared a threshold, and they say so.
+   * use_case_mismatch is a name that reached a playbook of another use case,
+   * refused by soc-ai.
    */
   how: string;
   matchedName?: string;
@@ -165,16 +175,61 @@ export class PlaybookService {
       : undefined;
   }
 
-  /** How the playbook reads to the model, and to the analyst beside it. */
+  /**
+   * Where the alert's data lives, completed from the playbook's detection SPL.
+   *
+   * The alert's own fields win: they say where this event is. The SPL only
+   * fills what they leave out — no index, or nothing placed it at all — and
+   * only from a playbook found by use case id or exact name (a near match's
+   * SPL is another detection's), and only with an index and sourcetype the
+   * catalogue lists. An index the estate no longer has would aim every search
+   * at nothing, and read as "nothing happened".
+   */
+  fillSource(hint: SourceHint | null, match: PlaybookMatch | null): SourceHint | null {
+    if (!match?.matched || !['id', 'exact'].includes(match.how) || !this.catalog.loaded) return hint;
+    const scope = match.playbook?.detection_scope;
+    const indexes = this.catalog.indexNames();
+    const index = (scope?.index ?? []).find((i) => indexes.includes(i));
+    if (!index) return hint;
+    const known = this.catalog.sourcetypeNames(index);
+    const sourcetype = (scope?.sourcetype ?? []).find((s) => known.includes(s));
+    const from = `the detection SPL of playbook "${match.playbook!.alert_name}"`;
+
+    if (!hint || hint.unknown) {
+      return { index, ...(sourcetype ? { sourcetype } : {}), from };
+    }
+    if (hint.index) return hint;
+    // The alert named a sourcetype: take the index only if it holds that sourcetype.
+    if (hint.sourcetype && !known.includes(hint.sourcetype)) return hint;
+    return {
+      ...hint,
+      index,
+      ...(!hint.sourcetype && sourcetype ? { sourcetype } : {}),
+      from: `${hint.from}; index from ${from}`,
+    };
+  }
+
+  /**
+   * How the playbook reads to the model, and to the analyst beside it.
+   *
+   * Every part is a passage with a tag the model must cite ([PB:true],
+   * [PB:step 2]); the rules under it say how. grounding.ts checks the reply
+   * against the same passages, so what is shown and what is checked cannot
+   * drift apart.
+   */
   render(match: PlaybookMatch | null): string {
     if (!match) return '';
     const lines = ['--- PLAYBOOK ---'];
 
     if (!match.matched) {
       lines.push(
-        match.note ??
-          'No playbook covers this alert. There is no written definition of what ' +
-            'makes it a true positive here, so do not invent one.',
+        match.note ?? 'No playbook covers this alert.',
+        '',
+        'There is no written definition of a true or false positive for this alert, and no runbook.',
+        'Do not give a verdict of true or false positive, do not write criteria or steps as if a',
+        'playbook had them, and do not cite [PB:...]. Describe what the evidence shows, and say that',
+        "the verdict needs an analyst and this use case's playbook.",
+        '--- END OF PLAYBOOK ---',
       );
       return lines.join('\n');
     }
@@ -182,6 +237,10 @@ export class PlaybookService {
     const p = match.playbook!;
     const tags = [p.use_case_id, p.version && `version ${p.version}`].filter(Boolean).join(', ');
     lines.push(`"${p.alert_name}"${tags ? ` (${tags})` : ''}`);
+    if (match.how === 'id') {
+      lines.push(`Matched by use case id${p.use_case_id ? ` ${p.use_case_id}` : ''}: this is the playbook for this alert.`);
+    }
+    if (match.how === 'exact') lines.push('Matched by exact name: this is the playbook for this alert.');
     if (match.how === 'fuzzy') {
       // Said to the model too. Criteria written for a detection with a
       // different name may not apply, and it should hedge accordingly.
@@ -204,13 +263,38 @@ export class PlaybookService {
     if (match.stale) {
       lines.push('This came from the last good copy — the playbook source could not be re-read.');
     }
-    if (p.rule_description) lines.push('', `What it detects: ${p.rule_description}`);
-    if (p.true_condition) lines.push('', `TRUE POSITIVE when: ${p.true_condition}`);
-    if (p.false_condition) lines.push('', `FALSE POSITIVE when: ${p.false_condition}`);
-    if (p.work_around) lines.push('', `The runbook says: ${p.work_around}`);
+
+    const shown = passages(p);
+    for (const passage of shown) {
+      lines.push('', `[${passage.id}] ${passage.label}: ${passage.text}`);
+    }
     if (match.queryProblem) {
       lines.push('', `Note on the playbook's own search: ${match.queryProblem}`);
     }
+
+    const has = (id: string) => shown.some((s) => s.id === id);
+    const steps = shown.filter((s) => s.id.startsWith('PB:step')).length;
+    lines.push('', 'HOW TO USE THIS PLAYBOOK — answer from it, not from general knowledge:');
+    if (has('PB:true') || has('PB:false')) {
+      lines.push(
+        '- Judge true or false positive only against [PB:true] and [PB:false], and cite the one the',
+        '  verdict rests on. If the evidence does not settle it, say which condition is not yet shown.',
+      );
+    } else {
+      lines.push('- This playbook gives no true or false condition: do not give a verdict, leave it to the analyst.');
+    }
+    if (steps > 0) {
+      lines.push(
+        `- Next steps come from the playbook's ${steps} step(s), cited [PB:step 1] to [PB:step ${steps}].`,
+        '  Anything else you recommend, start with "Not in the playbook:".',
+      );
+    }
+    lines.push(
+      '- Cite the [PB:...] tag after every statement taken from the playbook. Quote it word for word or not at all.',
+      '- Where the playbook does not cover something, write "The playbook does not say." Do not fill the gap.',
+      '- Evidence from the log, ThreatQ or Splunk is not the playbook: never tag it [PB:...].',
+      '--- END OF PLAYBOOK ---',
+    );
     return lines.join('\n');
   }
 }

@@ -116,6 +116,9 @@ code_test:
     # Type errors have reached main from this repo before. tsc is not a test
     # suite, but it is the check that would have caught them.
     - npx tsc --noEmit
+    # Holding the agents to the playbook: the citation check, the retry, and
+    # requirements tied to runbook steps. No database, no AI service.
+    - npm run test:unit
   rules:
     - if: '$CI_COMMIT_BRANCH'
 

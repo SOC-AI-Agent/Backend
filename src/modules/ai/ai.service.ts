@@ -3,6 +3,8 @@ import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 
+import { better, checkGrounding, correctionPrompt, GroundingMatch, GroundingReport } from './grounding';
+
 export interface AiGenerateResult {
   response: string;
   model: string;
@@ -100,6 +102,51 @@ export class AiService {
       this.logger.error(`AI service call failed: ${detail}`);
       throw new ServiceUnavailableException(`AI service error: ${detail}`);
     }
+  }
+
+  /**
+   * `generate`, then held to the playbook the prompt showed (grounding.ts).
+   *
+   * A reply that breaks the playbook rules — a verdict with no criteria behind
+   * it, a step that does not exist, a quote the playbook does not contain — is
+   * sent back once with what was wrong, when ai.groundingRetry is on. The better
+   * of the two is kept, and its report is returned to be stored beside it.
+   * Never fails over grounding: the first reply stands if the retry errors.
+   */
+  async generateGrounded(
+    renderedPrompt: string,
+    options: { agent?: string; model?: string },
+    match: GroundingMatch | null | undefined,
+  ): Promise<{ result: AiGenerateResult; grounding: GroundingReport }> {
+    const first = await this.generate(renderedPrompt, options);
+    const report = checkGrounding(first.response, match);
+    if (report.ok || !this.config.get<boolean>('ai.groundingRetry')) {
+      return { result: first, grounding: report };
+    }
+
+    this.logger.warn(
+      `${options.agent ?? 'agent'} broke the playbook rules, asking once more: ${report.problems.join(' | ')}`,
+    );
+    let second: AiGenerateResult;
+    try {
+      second = await this.generate(correctionPrompt(renderedPrompt, first.response, report), options);
+    } catch (err: any) {
+      this.logger.warn(`grounding retry failed, keeping the first reply: ${err?.message ?? err}`);
+      return { result: first, grounding: { ...report, retried: true } };
+    }
+    if (!second.response.trim()) return { result: first, grounding: { ...report, retried: true } };
+
+    const chosen = better({ result: first, report }, { result: second, report: checkGrounding(second.response, match) });
+    return {
+      result: {
+        ...chosen.result,
+        // Both calls were paid for.
+        total_duration_ms: first.total_duration_ms + second.total_duration_ms,
+        tokens_prompt: first.tokens_prompt + second.tokens_prompt,
+        tokens_eval: first.tokens_eval + second.tokens_eval,
+      },
+      grounding: { ...chosen.report, retried: true },
+    };
   }
 
   async healthy(): Promise<boolean> {

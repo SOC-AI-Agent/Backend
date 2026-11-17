@@ -267,9 +267,16 @@ user คนถัดไปให้ admin สร้างที่หน้า *
 ### Playbook จาก Confluence
 
 worker อ่าน playbook ทั้ง space จาก Confluence REST API ทุก `PLAYBOOK_SYNC_MINUTES` แล้วส่งให้
-`soc-ai` ซึ่ง extract field, embed และเก็บ index ลง volume `playbook-index` (embed เฉพาะ field ที่ข้อความ
-เปลี่ยน) แต่ละ alert จะ match กับ index นั้น (ชื่อตรง → สะกดใกล้ → ความหมาย) ดูผลได้ที่ส่วน playbook
-ของ job แรก ถ้าขึ้นว่ายังไม่มีอะไร index แปลว่า `CONFLUENCE_*` ยังไม่ครบ หรือ sync รอบแรกยังไม่เสร็จ
+`soc-ai` ซึ่ง extract field, embed แล้วเก็บ vector ลง Qdrant (embed เฉพาะ field ที่ข้อความเปลี่ยน)
+ส่วนตัว playbook เก็บเป็นไฟล์ JSON ใน volume `playbook-index` แต่ละ alert จะ match กับ index นั้น
+(use case id → ชื่อตรง → สะกดใกล้ → ความหมาย) และจะไม่ match ไปหา playbook ที่ use case id ไม่ตรงกับ
+alert ดูผลได้ที่ส่วน playbook ของ job แรก ถ้าขึ้นว่ายังไม่มีอะไร index แปลว่า `CONFLUENCE_*` ยังไม่ครบ
+หรือ sync รอบแรกยังไม่เสร็จ
+
+playbook ที่ match ได้จะถูกส่งให้ model เป็นท่อนๆ ที่มี tag (`[PB:true]`, `[PB:false]`, `[PB:step 2]`)
+พร้อมกฎว่าให้ตอบจาก playbook เท่านั้น และให้ cite tag ทุกครั้ง worker จะตรวจคำตอบ (verdict ต้อง cite
+`[PB:true]`/`[PB:false]`, step ต้องมีจริง, ข้อความที่ quote ต้องอยู่ใน playbook) ถ้าไม่ผ่านจะถาม model ใหม่
+1 ครั้ง (`LLM_GROUNDING_RETRY`) ผลตรวจเก็บไว้ที่ `evidence.grounding` ของ job
 
 ---
 

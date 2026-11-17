@@ -7,6 +7,7 @@ import { Job } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AiService } from '../ai/ai.service';
 import { buildConclusionPrompt, parseConclusion } from '../ai/conclusion';
+import { GroundingMatch } from '../ai/grounding';
 import { AuditService } from '../audit/audit.service';
 import {
   SplunkAnswer,
@@ -238,7 +239,11 @@ export class LookupProcessor extends WorkerHost {
           resultsUsed: answers.length,
         };
         await save();
-        analysis = await this.conclude(jobId, record.renderedPrompt, record.aiResponse, answers, analysis);
+        analysis = await this.conclude(
+          jobId, record.renderedPrompt, record.aiResponse, answers, analysis,
+          // The playbook the first reading was shown: the analysis is held to the same one.
+          (record.evidence as { playbook?: GroundingMatch | null } | null)?.playbook ?? null,
+        );
       }
     }
 
@@ -329,19 +334,27 @@ export class LookupProcessor extends WorkerHost {
     suggestion: string,
     answers: LookupAnswer[],
     running: FinalAnalysis,
+    playbook: GroundingMatch | null = null,
   ): Promise<FinalAnalysis> {
     const began = Date.now();
     const done = () => ({ durationMs: Date.now() - began, completedAt: new Date().toISOString() });
 
     try {
-      const run = await this.ai.generate(buildConclusionPrompt(rendered, suggestion, answers), {
-        agent: this.config.get<string>('ai.concludeAgent'),
-      });
+      const { result: run, grounding } = await this.ai.generateGrounded(
+        buildConclusionPrompt(rendered, suggestion, answers),
+        { agent: this.config.get<string>('ai.concludeAgent') },
+        playbook,
+      );
       const text = parseConclusion(run.response);
       if (!text) {
         return { ...running, ...done(), status: 'failed', error: 'the agent returned nothing' };
       }
-      return { ...running, ...done(), status: 'completed', text, model: run.model, runId: run.run_id ?? null };
+      if (!grounding.ok) {
+        this.logger.warn(`Lookup for ${jobId}: the analysis does not hold to the playbook: ${grounding.problems.join(' | ')}`);
+      }
+      return {
+        ...running, ...done(), status: 'completed', text, model: run.model, runId: run.run_id ?? null, grounding,
+      };
     } catch (err: any) {
       const message = err?.message ?? String(err);
       this.logger.warn(`Lookup for ${jobId}: the analysis failed — the answers are kept: ${message}`);

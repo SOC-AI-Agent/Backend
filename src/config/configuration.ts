@@ -123,6 +123,13 @@ export default () => ({
      */
     splAgent: (process.env.LLM_SPL_AGENT ?? '').trim() || 'soc-spl-writer',
     /**
+     * A suggestion or analysis that breaks the playbook rules (a verdict with no
+     * [PB:true]/[PB:false] behind it, a step the playbook does not have, a quote
+     * it does not contain) is sent back to the agent once with what was wrong.
+     * Off: the reply is kept as it came and only flagged on the job.
+     */
+    groundingRetry: (process.env.LLM_GROUNDING_RETRY ?? 'true').toLowerCase() !== 'false',
+    /**
      * Bearer token soc-ai requires on every route but /health. Must match
      * AI_SERVICE_AUTH_TOKEN in AI-Service/.env byte for byte.
      */

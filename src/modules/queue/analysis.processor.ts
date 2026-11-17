@@ -7,6 +7,7 @@ import { Job, Queue } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AiService } from '../ai/ai.service';
 import { buildRequirementsPrompt } from '../ai/conclusion';
+import { GroundingReport, stepsOf } from '../ai/grounding';
 import { ModelRequirement, parseRequirements, parseSuggestion } from '../ai/requirements';
 import { CatalogService } from '../enrichment/catalog.service';
 import { dropFields } from '../enrichment/drop-fields';
@@ -95,9 +96,16 @@ export class AnalysisProcessor extends WorkerHost {
 
     // The suggestion. Without it there is nothing to show, so it is the one call
     // in this stage whose failure fails the job.
+    // Held to the playbook it was shown: a verdict without [PB:true]/[PB:false],
+    // or a step or quote the playbook does not have, is sent back once.
     let result: Awaited<ReturnType<AiService['generate']>>;
+    let grounding: GroundingReport;
     try {
-      result = await this.ai.generate(rendered, { agent: this.config.get<string>('ai.suggestAgent') });
+      ({ result, grounding } = await this.ai.generateGrounded(
+        rendered,
+        { agent: this.config.get<string>('ai.suggestAgent') },
+        enrichment.playbook,
+      ));
     } catch (err: any) {
       const message = err?.message ?? String(err);
       this.logger.error(`Job ${jobId} failed: ${message}`);
@@ -122,6 +130,12 @@ export class AnalysisProcessor extends WorkerHost {
     }
 
     const suggestion = parseSuggestion(result.response);
+    if (!grounding.ok) {
+      this.logger.warn(
+        `Job ${jobId}: the suggestion does not hold to the playbook` +
+          `${grounding.retried ? ' even after a retry' : ''}: ${grounding.problems.join(' | ')}`,
+      );
+    }
 
     const { finalPlan, requirementsRun } = splunkStage
       ? await this.planLookups(jobId, rendered, suggestion.suggestion, enrichment)
@@ -140,6 +154,8 @@ export class AnalysisProcessor extends WorkerHost {
         evidence: {
           ...enrichment,
           requirements_run_id: requirementsRun?.run_id ?? null,
+          // Whether the suggestion held to the playbook, and if not, where it did not.
+          grounding,
         } as unknown as Prisma.InputJsonValue,
         modelUsed: result.model,
         processingTimeMs: elapsedMs,
@@ -169,6 +185,8 @@ export class AnalysisProcessor extends WorkerHost {
         model: result.model,
         ai_service_ms: result.total_duration_ms + (requirementsRun?.total_duration_ms ?? 0),
         requirements: finalPlan.length,
+        grounded: grounding.ok,
+        grounding_retried: Boolean(grounding.retried),
       },
     });
 
@@ -208,18 +226,22 @@ export class AnalysisProcessor extends WorkerHost {
     // suggestion is already in hand and the derived plan below is the floor.
     let requirementsRun: Awaited<ReturnType<AiService['generate']>> | null = null;
     let asked: ReturnType<AnalysisProcessor['aim']> = [];
+    // The playbook's runbook steps, which the agent is asked to work from first.
+    const steps = enrichment.playbook?.matched ? stepsOf(enrichment.playbook.playbook ?? {}).length : 0;
     try {
       requirementsRun = await this.ai.generate(
-        buildRequirementsPrompt(rendered, suggestion, maxRequirements),
+        buildRequirementsPrompt(rendered, suggestion, maxRequirements, steps),
         { agent: this.config.get<string>('ai.requirementsAgent') },
       );
       // A detail the agent lists is kept only if it appears in what the agent was
       // shown: the alert, ThreatQ, the playbook and the suggestion.
       const shown = `${rendered}\n${suggestion}`;
-      asked = this.aim(
-        parseRequirements(requirementsRun.response, known, maxRequirements, shown),
-        enrichment,
-      );
+      const parsed = parseRequirements(requirementsRun.response, known, maxRequirements, shown, steps);
+      // What a runbook step needs goes first, in the runbook's order: a person who
+      // knows this detection wrote that list, and the model's own ideas follow it.
+      // Stable, so questions without a step keep the order the model gave them.
+      const order = (r: ModelRequirement) => r.playbookStep ?? Number.MAX_SAFE_INTEGER;
+      asked = this.aim([...parsed].sort((a, b) => order(a) - order(b)), enrichment);
     } catch (err: any) {
       this.logger.warn(
         `Job ${jobId}: the requirements agent failed (${err?.message ?? err}) — ` +
@@ -283,6 +305,7 @@ export class AnalysisProcessor extends WorkerHost {
       const details = {
         ...(r.context ? { context: r.context } : {}),
         ...(r.droppedContext ? { droppedContext: r.droppedContext } : {}),
+        ...(r.playbookStep ? { playbookStep: r.playbookStep } : {}),
       };
       if (!r.indicator || !r.indicatorType) {
         // Kept rather than dropped. A requirement naming nothing we extracted
@@ -310,7 +333,9 @@ export class AnalysisProcessor extends WorkerHost {
       );
       return {
         requirement: r.requirement,
-        because: `${r.indicatorType} ${r.indicator}, asked for by the model`,
+        because: r.playbookStep
+          ? `${r.indicatorType} ${r.indicator}, for step ${r.playbookStep} of the playbook`
+          : `${r.indicatorType} ${r.indicator}, asked for by the model`,
         rank: 1,
         indicator: r.indicator,
         indicatorType: r.indicatorType,

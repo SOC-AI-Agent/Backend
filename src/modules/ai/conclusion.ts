@@ -15,7 +15,7 @@ import { requirementsFormat } from './requirements';
  * from what the suggestion says was not determined, so it is given that text and
  * not asked to work it out again.
  */
-export function buildRequirementsPrompt(rendered: string, suggestion: string, limit = 5): string {
+export function buildRequirementsPrompt(rendered: string, suggestion: string, limit = 5, steps = 0): string {
   return [
     rendered,
     '',
@@ -23,7 +23,7 @@ export function buildRequirementsPrompt(rendered: string, suggestion: string, li
     suggestion,
     '--- END OF SUGGESTION ---',
     '',
-    requirementsFormat(limit),
+    requirementsFormat(limit, steps),
   ].join('\n');
 }
 

@@ -37,6 +37,11 @@ export interface ModelRequirement {
   context?: Record<string, string>;
   /** Details the agent wrote that appear nowhere in what it was shown, as `key: value`. */
   droppedContext?: string[];
+  /**
+   * The playbook step (1-based, [PB:step N]) this question serves, when the
+   * agent named one that exists. These run first: the runbook says to look.
+   */
+  playbookStep?: number;
 }
 
 /**
@@ -49,9 +54,20 @@ export interface ModelRequirement {
  * device name, a user agent or a type tells it which data and which fields the
  * question is about far better than the question alone.
  */
-export function requirementsFormat(limit: number): string {
+export function requirementsFormat(limit: number, steps = 0): string {
+  const fromPlaybook =
+    steps > 0
+      ? [
+          `Start from the playbook. For each of its steps ([PB:step 1] to [PB:step ${steps}]) that needs`,
+          'data from Splunk to carry out, ask the question that step needs answered, and put',
+          '`step: N` under it with that step\'s number. Only then add what else the evidence needs,',
+          'without a step line. Never give a step number the playbook does not have.',
+          '',
+        ]
+      : [];
   return [
     '--- ANSWER FORMAT ---',
+    ...fromPlaybook,
     `List what to ask Splunk, at most ${limit} distinct items. For each one write:`,
     '- the question, one line, naming the exact indicator value it is about (do not ask multiple questions about the same value unless narrowing by a different detail)',
     '- then, one per line, only the detail(s) from the alert above needed to scope that search, as `key: value`',
@@ -61,6 +77,7 @@ export function requirementsFormat(limit: number): string {
     '',
     'Example of the shape (the values here are not from this alert):',
     '1. What else did 203.0.113.7 touch in the 24 hours around the alert',
+    ...(steps > 0 ? ['   step: 2'] : []),
     '   source: 203.0.113.7',
     '   device: fw-edge-01',
     '',
@@ -89,8 +106,10 @@ const KNOWN_KEYS = new Set([
   'user_name', 'account', 'user_agent', 'useragent', 'host', 'hostname', 'hash', 'md5',
   'sha1', 'sha256', 'file', 'file_name', 'process', 'command', 'signature', 'type',
   'action', 'app', 'application', 'email', 'sender', 'recipient', 'event', 'event_name',
-  'region', 'service', 'technique', 'tactic', 'severity', 'category',
+  'region', 'service', 'technique', 'tactic', 'severity', 'category', 'step',
 ]);
+// "[PB:step 2]" written into the question itself rather than under it.
+const STEP_TAG = /\s*\[\s*PB\s*:\s*step\s*(\d+)\s*\]\s*/i;
 
 export interface ParsedSuggestion {
   suggestion: string;
@@ -153,6 +172,8 @@ export function parseRequirements(
   known: KnownIndicator[],
   limit = 5,
   shown?: string,
+  /** How many steps the playbook it was shown has; a `step: N` outside 1..steps is dropped. */
+  steps = 0,
 ): ModelRequirement[] {
   const text = (reply ?? '').trim();
   if (!text) return [];
@@ -170,12 +191,19 @@ export function parseRequirements(
     (a, b) => priority(a.type) - priority(b.type) || b.value.length - a.value.length,
   );
 
-  type Draft = { requirement: string; context: Record<string, string>; dropped: string[] };
+  type Draft = { requirement: string; context: Record<string, string>; dropped: string[]; step?: number };
   const drafts: Draft[] = [];
   const seen = new Set<string>();
   // The question the detail lines below it belong to. Unset after a skipped line,
   // so details under a duplicate or a `none` do not land on the question before.
   let current: Draft | undefined;
+  // A step is a number, and "2" is in any prompt: checked against the playbook's
+  // step count, not against what the agent was shown.
+  const takeStep = (draft: Draft, raw: string) => {
+    const n = Number.parseInt(raw.replace(/^\D+/, ''), 10);
+    if (Number.isInteger(n) && n >= 1 && n <= steps) draft.step ??= n;
+    else draft.dropped.push(`step: ${raw} (the playbook has ${steps ? `steps 1-${steps}` : 'no steps'})`);
+  };
 
   for (const line of body.split('\n')) {
     if (!line.trim()) continue;
@@ -183,6 +211,10 @@ export function parseRequirements(
     const detail = current ? detailOf(line) : null;
     const indented = /^\s+\S/.test(line);
     if (current && detail && (indented || !BULLET.test(line) || KNOWN_KEYS.has(detail.key))) {
+      if (detail.key === 'step') {
+        takeStep(current, detail.value);
+        continue;
+      }
       if (Object.keys(current.context).length >= MAX_DETAILS) continue;
       const real = !haystack || (detail.value.length >= 2 && haystack.includes(detail.value.toLowerCase()));
       if (real) current.context[detail.key] ??= detail.value;
@@ -193,16 +225,19 @@ export function parseRequirements(
     const bullet = BULLET.exec(line);
     if (!bullet) continue;
     current = undefined;
-    const item = line.slice(bullet[0].length).trim().replace(/[.;]+$/, '');
+    let item = line.slice(bullet[0].length).trim().replace(/[.;]+$/, '');
+    const tag = STEP_TAG.exec(item);
+    if (tag) item = item.replace(STEP_TAG, ' ').trim().replace(/[.;:,]+$/, '');
     if (!item || NOTHING.test(item)) continue;
     const key = item.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
     current = { requirement: item, context: {}, dropped: [] };
+    if (tag) takeStep(current, tag[1]);
     drafts.push(current);
   }
 
-  return drafts.slice(0, limit).map(({ requirement, context, dropped }) => {
+  return drafts.slice(0, limit).map(({ requirement, context, dropped, step }) => {
     // The question names the value it is about; failing that, a detail does.
     const hit =
       byLength.find((i) => requirement.includes(i.value)) ??
@@ -210,6 +245,7 @@ export function parseRequirements(
     const details = {
       ...(Object.keys(context).length ? { context } : {}),
       ...(dropped.length ? { droppedContext: dropped } : {}),
+      ...(step ? { playbookStep: step } : {}),
     };
     return hit
       ? { requirement, indicator: hit.value, indicatorType: hit.type, ...details }

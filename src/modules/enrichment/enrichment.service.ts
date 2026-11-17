@@ -61,10 +61,12 @@ export class EnrichmentService {
     const { indicators: fromSoar } = this.ioc.normalise(supplied);
     const { indicators, skipped } = this.ioc.extract(rawLog, fromSoar);
     const threatq = await this.threatq.lookup(indicators);
-    const source = this.sourceMap.resolve(alertName, rawLog, alertFields);
     // Asked in parallel with nothing, because it is one HTTP call and the
     // model cannot start until the whole block is ready anyway.
     const playbook = await this.playbook.match(alertName, useCaseId);
+    // Where the alert's data lives: from the alert, and what it leaves out
+    // from the playbook's detection SPL, when the catalogue agrees.
+    const source = this.playbook.fillSource(this.sourceMap.resolve(alertName, rawLog, alertFields), playbook);
     const searchableSkipped = skipped
       .filter((s) => s.searchable)
       .map((s) => ({ type: s.type, value: s.value, source: 'internal' }));

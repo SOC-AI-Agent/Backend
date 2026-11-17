@@ -6,6 +6,8 @@
  * would put that in front of every alert still waiting to be triaged, and the
  * fast first answer is the whole point of splitting the two.
  */
+import type { GroundingReport } from '../ai/grounding';
+
 export const LOOKUP_QUEUE = 'splunk-lookup';
 export const RUN_LOOKUP_JOB = 'run_lookup';
 
@@ -91,6 +93,8 @@ export interface FinalAnalysis {
   completedAt?: string;
   /** How many results it was given, so "[splunk 3]" can be checked against a list. */
   resultsUsed?: number;
+  /** Whether it held to the playbook (ai/grounding.ts), and where it did not. */
+  grounding?: GroundingReport;
 }
 
 /** What lookup_result holds. */
