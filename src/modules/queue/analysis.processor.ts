@@ -50,7 +50,7 @@ export class AnalysisProcessor extends WorkerHost {
   }
 
   async process(job: Job<AnalyzeAlertPayload>): Promise<void> {
-    const { jobId, alertId, alertName, rawLog, indicators, apiKeyId, actorLabel, ipAddress } =
+    const { jobId, alertId, alertName, useCaseId, rawLog, indicators, apiKeyId, actorLabel, ipAddress } =
       job.data;
     const startedAt = Date.now();
 
@@ -68,7 +68,7 @@ export class AnalysisProcessor extends WorkerHost {
     const evidence = dropFields(rawLog, this.config.get<string[]>('enrichment.dropFields') ?? []);
     const splunkStage = this.config.get<string>('lookup.mode') !== 'off';
     const enrichment = await this.enrichment.run(
-      evidence, indicators, alertName, undefined, record.createdAt,
+      evidence, indicators, alertName, undefined, record.createdAt, useCaseId,
     );
     const rendered = this.ai.buildRenderedPrompt(
       evidence,

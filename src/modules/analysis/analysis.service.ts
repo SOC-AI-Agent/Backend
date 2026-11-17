@@ -60,7 +60,7 @@ export class AnalysisService {
       ipAddress,
       jobId: job.jobId,
       statusCode: 202,
-      extraData: { alert_id: dto.alert_id, alert_name: dto.alert_name },
+      extraData: { alert_id: dto.alert_id, alert_name: dto.alert_name, use_case_id: dto.use_case_id },
     });
 
     await this.queue.add(
@@ -69,6 +69,7 @@ export class AnalysisService {
         jobId: job.jobId,
         alertId: dto.alert_id,
         alertName: dto.alert_name,
+        useCaseId: dto.use_case_id,
         rawLog: dto.raw_log,
         indicators: dto.indicators?.map((i) => ({
           type: i.type,

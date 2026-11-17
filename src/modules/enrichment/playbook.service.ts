@@ -37,6 +37,7 @@ export interface PlaybookQuery {
 export interface Playbook {
   page_id: string;
   alert_name: string;
+  use_case_id?: string;
   aliases?: string[];
   url?: string;
   use_case_category?: string;
@@ -53,8 +54,9 @@ export interface Playbook {
 export interface PlaybookMatch {
   matched: boolean;
   /**
-   * exact | fuzzy | semantic | miss | empty | unindexed | error. Fuzzy and
-   * semantic are guesses that cleared a threshold, and they say so.
+   * id | exact | fuzzy | semantic | miss | empty | unindexed | error. `id` is
+   * the use case code, the surest of them. Fuzzy and semantic are guesses that
+   * cleared a threshold, and they say so.
    */
   how: string;
   matchedName?: string;
@@ -84,7 +86,7 @@ export class PlaybookService {
     return Boolean(this.config.get<string>('ai.baseUrl'));
   }
 
-  async match(alertName: string): Promise<PlaybookMatch | null> {
+  async match(alertName: string, useCaseId?: string): Promise<PlaybookMatch | null> {
     const { baseUrl, token } = this.config.get('ai');
     const { timeoutMs } = this.config.get('playbook');
     if (!baseUrl || !alertName?.trim()) return null;
@@ -94,7 +96,7 @@ export class PlaybookService {
         this.http.post<any>(
           `${baseUrl}/playbooks/match`,
           // soc-ai refuses a name over 512 characters; no detection has one.
-          { alert_name: alertName.trim().slice(0, 512) },
+          { alert_name: alertName.trim().slice(0, 512), ...(useCaseId ? { use_case_id: useCaseId } : {}) },
           { timeout: timeoutMs, headers: bearer(token) },
         ),
       );
@@ -178,7 +180,8 @@ export class PlaybookService {
     }
 
     const p = match.playbook!;
-    lines.push(`"${p.alert_name}"${p.version ? ` (version ${p.version})` : ''}`);
+    const tags = [p.use_case_id, p.version && `version ${p.version}`].filter(Boolean).join(', ');
+    lines.push(`"${p.alert_name}"${tags ? ` (${tags})` : ''}`);
     if (match.how === 'fuzzy') {
       // Said to the model too. Criteria written for a detection with a
       // different name may not apply, and it should hedge accordingly.

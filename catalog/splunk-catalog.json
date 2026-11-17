@@ -17,7 +17,7 @@
 
   "indexes": {
     "main": {
-      "purpose": "The lab estate. FortiGate sample events (recent), and one Windows web server, KBTG-Bootcamp, on 24 Dec 2024 16:43-17:58 UTC: its Apache access log, Sysmon and Windows event logs. Those three hold nothing outside that hour — a search must reach back to it.",
+      "purpose": "The lab estate. FortiGate sample events (recent); one Windows web server, KBTG-Bootcamp, on 24 Dec 2024 16:43-17:58 UTC (Apache access log, Sysmon, Windows event logs); and the corp.local office on 24 Dec 2024 08:00-20:00 UTC: file server FS-01, workstations WS-*, Linux web-02, firewall FGT-01, DNS ns-01. Nothing but the FortiGate samples is recent — a search must reach back to 24 Dec 2024.",
       "sourcetypes": {
         "access_combined": {
           "purpose": "Apache access log of the web server. One line per HTTP request.",
@@ -38,7 +38,7 @@
           ]
         },
         "sysmon": {
-          "purpose": "Sysmon on KBTG-Bootcamp. Process creation (EventCode 1) mostly; also file create (11), registry set (13), named pipes (17, 18).",
+          "purpose": "Sysmon on KBTG-Bootcamp and the corp.local machines. Process creation (EventCode 1) mostly; also process access (10), file create (11), registry set (13), named pipes (17, 18).",
           "roles": {
             "user": "User",
             "host": "Computer",
@@ -50,7 +50,8 @@
             "ParentImage", "ParentCommandLine", "ParentUser", "OriginalFileName",
             "Hashes", "SHA256", "IntegrityLevel", "ProcessId", "ParentProcessId",
             "ProcessGuid", "ParentProcessGuid", "LogonId", "TargetFilename",
-            "TargetObject", "Details", "PipeName", "RuleName", "UtcTime"
+            "TargetObject", "Details", "PipeName", "RuleName", "UtcTime",
+            "SourceImage", "TargetImage", "GrantedAccess", "CallTrace", "SourceUser", "TargetUser"
           ],
           "notes": [
             "No network events (EventCode 3) were collected: there is no IP address in this sourcetype. An address is in access_combined or wineventlog.",
@@ -58,11 +59,13 @@
             "`SHA256` is the bare hash. An MD5 or IMPHASH is only inside `Hashes` (MD5=...,SHA256=...,IMPHASH=...): Hashes=\"*value*\". No SHA1.",
             "Write each backslash of a value twice inside quotes: Image=\"C:\\\\Windows\\\\name.exe\". Written once, it matches nothing.",
             "Follow a process to its children with ParentImage or ParentProcessGuid, not ProcessId, which is reused.",
+            "EventCode 10 is one process opening another: `SourceImage` opened `TargetImage` with the rights in `GrantedAccess` (0x1FFFFF is full access). It has no `Image` or `User`; its account is `SourceUser`.",
+            "`host` is a load label; the machine is `Computer`, a full name like WS-12.corp.local: Computer=\"WS-12*\".",
             "Most events are the Splunk forwarder's own helpers (Image under SplunkUniversalForwarder). Exclude them to see the rest."
           ]
         },
         "wineventlog": {
-          "purpose": "Windows Security, System and Application event logs of KBTG-Bootcamp: logons (4624, 4634, 4672, 4776), services (7036, 7045).",
+          "purpose": "Windows Security, System and Application event logs of KBTG-Bootcamp and FS-01: logons (4624, 4625 failed, 4634, 4672, 4776), services (7036, 7045).",
           "roles": {
             "src_ip": "Source_Network_Address",
             "src_port": "Source_Port",
@@ -76,10 +79,12 @@
             "Logon_Account", "Logon_Type", "Logon_ID", "Logon_Process", "Authentication_Package",
             "Source_Network_Address", "Source_Port", "Workstation_Name", "Process_Name",
             "Security_ID", "Privileges", "Error_Code", "Service_Name", "Service_File_Name",
-            "Service_Type", "Service_Start_Type", "Service_Account", "TaskCategory", "Keywords", "Message"
+            "Service_Type", "Service_Start_Type", "Service_Account", "TaskCategory", "Keywords", "Message",
+            "Failure_Reason", "Status", "Sub_Status"
           ],
           "notes": [
-            "`Account_Name` has two values in a 4624: who asked for the logon, then who logged on. A 4776 names the account in `Logon_Account` instead.",
+            "`Account_Name` has two values in a 4624 and a 4625: who asked for the logon (often `-`), then the account logged on or tried. Take the second: mvindex(Account_Name, -1). A 4776 names the account in `Logon_Account` instead.",
+            "A 4625 is a failed logon. `Sub_Status` says why: 0xC0000064 no such account, 0xC000006A wrong password, 0xC0000234 locked out.",
             "`Source_Network_Address` is `-` for a local logon. Logon_Type 3 is over the network, 5 is a service.",
             "`ComputerName` is the machine that wrote the event; `Workstation_Name` is the remote client and is often empty.",
             "A new service is EventCode 7045: `Service_Name` and `Service_File_Name`. 7036 is only a service changing state.",
@@ -105,9 +110,41 @@
           "notes": [
             "`host` is the syslog forwarder that shipped the event, NOT the machine the alert is about. Use `srcip`.",
             "`devname` is the firewall appliance, not an endpoint.",
-            "action values: blocked, accept, close. `blocked` means the firewall stopped it — the connection did not complete.",
+            "action values: accept, deny, blocked, close. `deny` and `blocked` mean the firewall stopped it — the connection did not complete.",
             "type=traffic is a session; type=utm carries virus/IPS detections and adds `virus` and `filename`.",
+            "Internal addresses are 10.10.0.0/16 (dstcountry=Reserved). `sentbyte`/`rcvdbyte` are bytes per session.",
             "These logs are NOT CIM-normalised: src_ip, dest_ip, dvc and src do not exist here."
+          ]
+        },
+        "linux_secure": {
+          "purpose": "Authentication log (/var/log/secure) of the Linux web server web-02: sshd logins and sudo.",
+          "roles": {
+            "src_ip": "src",
+            "src_port": "src_port",
+            "user": "user",
+            "host": "host",
+            "process": "process",
+            "action": "action"
+          },
+          "fields": ["process", "pid", "action", "auth_method", "user", "src", "src_port", "target_user", "command"],
+          "notes": [
+            "sshd: `action` is Failed or Accepted, `auth_method` password or publickey, `user` the account tried (also invalid ones).",
+            "sudo: `user` ran `command` as `target_user`. A sudo line has no `src`.",
+            "`host` is the server itself here (web-02)."
+          ]
+        },
+        "bind_query": {
+          "purpose": "BIND query log of the internal DNS server ns-01 (10.10.1.53). One line per DNS query.",
+          "roles": {
+            "src_ip": "src",
+            "src_port": "src_port",
+            "domain": "query"
+          },
+          "fields": ["src", "src_port", "query", "record_type"],
+          "notes": [
+            "`src` is the client that asked; `query` the full name asked for; `record_type` A, AAAA, TXT, SRV...",
+            "No answers or response codes are logged — only the questions.",
+            "To group by domain, cut `query` to its last two labels: mvjoin(mvindex(split(query, \".\"), -2, -1), \".\")."
           ]
         }
       }

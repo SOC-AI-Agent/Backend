@@ -6,7 +6,11 @@ Self-contained Docker image for the FortiSOAR playbook simulator (Web UI + CLI) 
 
 - `app.py` — HTTP proxy / web UI server and CLI runner (Python stdlib only)
 - `static/index.html` — Dark FortiSOAR-style web UI
-- `alerts/lab-alerts.json` — Default lab alerts (`FSR-LAB-001`..`005`)
+- `alerts/lab-alerts.json` — Default lab alerts (`FSR-LAB-001`..`042`), each built on a real event from the lab logs:
+  - `001`..`020` — the web server KBTG-Bootcamp (directory scan, web shell, service install)
+  - `021`..`027` — one per synthetic scenario (`gen_*.csv`), named as its playbook
+  - `028`..`036` — the same attacks under other names: an alias, a later step of the chain, or a name that matches nothing, with a `use_case_id` as a SOAR synced with the SIEM would send
+  - `037`..`042` — false positives: a playbook's alert name on an ordinary event (a mistyped password, Defender reading lsass, an SPF lookup), which the playbook's False Condition should close
 - `Dockerfile` — Non-root `python:3.12-slim` image with `/health` healthcheck
 - `docker-compose.yml` — Standalone Compose attached to `soc-network`
 

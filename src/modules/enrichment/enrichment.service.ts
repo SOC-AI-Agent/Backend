@@ -55,6 +55,7 @@ export class EnrichmentService {
     // When the alert fired, not when this runs. The searches are anchored to
     // it, so pressing the button a day later still looks where the alert is.
     alertTime: Date = new Date(),
+    useCaseId?: string,
   ): Promise<Enrichment> {
     const resolvedTime = this.parseLogTime(rawLog) ?? alertTime;
     const { indicators: fromSoar } = this.ioc.normalise(supplied);
@@ -63,7 +64,7 @@ export class EnrichmentService {
     const source = this.sourceMap.resolve(alertName, rawLog, alertFields);
     // Asked in parallel with nothing, because it is one HTTP call and the
     // model cannot start until the whole block is ready anyway.
-    const playbook = await this.playbook.match(alertName);
+    const playbook = await this.playbook.match(alertName, useCaseId);
     const searchableSkipped = skipped
       .filter((s) => s.searchable)
       .map((s) => ({ type: s.type, value: s.value, source: 'internal' }));

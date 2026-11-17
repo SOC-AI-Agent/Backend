@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  IsArray, IsInt, IsNotEmpty, IsOptional, IsString, Min, ValidateNested,
+  IsArray, IsInt, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, Min, ValidateNested,
 } from 'class-validator';
 
 export class IndicatorDto {
@@ -36,10 +36,19 @@ export class AnalyzeDto {
   @IsString() @IsNotEmpty()
   alert_id: string;
 
-  /** The detection's name. It is how a playbook is matched, so send it as the SIEM names it. */
+  /** The detection's name, as the SIEM names it. A playbook is matched by it when there is no use case id. */
   @ApiProperty({ example: 'Outbound connection blocked by perimeter firewall' })
   @IsString() @IsNotEmpty()
   alert_name: string;
+
+  /**
+   * The SOC's code for the detection (its use case). Matched against a
+   * playbook's Use Case ID before any name, because it survives a rename. Left
+   * out, a code written in alert_name (`... UC-CAT-012 ...`) is used instead.
+   */
+  @ApiPropertyOptional({ example: 'UC-CAT-012' })
+  @IsOptional() @IsString() @MaxLength(64) @Matches(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+  use_case_id?: string;
 
   /** The event as it was logged. Indicators are extracted from it. */
   @ApiProperty({

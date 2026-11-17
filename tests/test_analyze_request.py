@@ -102,3 +102,17 @@ def test_a_caller_supplied_prompt_is_dropped_not_stored(api, accepted):
     _, resp = accepted
     body = api.get(f"/v1/results/{resp.json()['job_id']}").json()
     assert "prompt" not in body
+
+
+# ── The use case id ────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("bad", ["UC 012", "x" * 65, "-UC", 12])
+def test_a_malformed_use_case_id_is_a_400(api, bad):
+    resp = submit(api, {**make_alert(), "use_case_id": bad})
+    assert resp.status_code == 400
+    assert "use_case_id" in str(resp.json()["detail"])
+
+
+def test_an_alert_with_a_use_case_id_is_accepted(api):
+    resp = submit(api, {**make_alert(), "use_case_id": "UC-CAT-012"})
+    assert resp.status_code == 202, resp.text
