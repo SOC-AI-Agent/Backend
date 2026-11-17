@@ -62,8 +62,9 @@
     <header class="topbar">
       <div class="brand">FortiSOAR Simulator &middot; SOC-AI-AGENT</div>
       <div class="cfg">
-        <input id="baseUrl" size="24" placeholder="http://localhost:8082" title="Backend Base URL" />
-        <input id="apiKey" type="password" size="24" placeholder="X-API-Key" title="X-API-Key" />
+        <input id="baseUrl" size="24" placeholder="http://localhost:8082" title="Backend Base URL" oninput="saveCfg()" />
+        <input id="apiKey" type="password" size="24" placeholder="X-API-Key" title="X-API-Key" oninput="saveCfg()" />
+        <button class="sec" id="saveCfgBtn" onclick="saveCfg(true)" title="Save settings in browser">Save</button>
       </div>
     </header>
     <div class="content">
@@ -139,9 +140,25 @@
       return { sev: 'Low', src: 'Splunk - Apache', type: 'Reconnaissance' };
     }
 
+    const KEY_STORAGE = 'fortisoar_sim_api_key';
+    const URL_STORAGE = 'fortisoar_sim_base_url';
+
+    function saveCfg(flash) {
+      const url = document.getElementById('baseUrl').value.trim();
+      const key = document.getElementById('apiKey').value.trim();
+      if (url) localStorage.setItem(URL_STORAGE, url); else localStorage.removeItem(URL_STORAGE);
+      if (key) localStorage.setItem(KEY_STORAGE, key); else localStorage.removeItem(KEY_STORAGE);
+      if (flash) {
+        const btn = document.getElementById('saveCfgBtn');
+        btn.textContent = 'Saved';
+        setTimeout(() => { btn.textContent = 'Save'; }, 1200);
+      }
+    }
+
     async function init() {
       const cfg = await (await fetch('/api/config')).json();
-      document.getElementById('baseUrl').value = cfg.base_url;
+      document.getElementById('baseUrl').value = localStorage.getItem(URL_STORAGE) || cfg.base_url;
+      document.getElementById('apiKey').value = localStorage.getItem(KEY_STORAGE) || '';
       if (cfg.has_env_key) document.getElementById('apiKey').placeholder = 'Using SOC_API_KEY env (or override)';
       const alerts = await (await fetch('/api/alerts')).json();
       rows = alerts.map(a => ({ ...a, ...inferMeta(a), assigned: 'SOC Tier 1', status: 'Open', checked: false, job: null }));
