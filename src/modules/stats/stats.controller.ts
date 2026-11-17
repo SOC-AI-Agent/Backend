@@ -7,19 +7,21 @@ import { ApiRoleAuth } from '../../common/decorators/api-docs.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { AiService } from '../ai/ai.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { StatsResponse } from './dto/stats.response';
+import { PlaybookStatusResponse, StatsResponse } from './dto/stats.response';
 
 @ApiTags('Admin')
-@Controller('admin/stats')
+@Controller('admin')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class StatsController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly ai: AiService,
   ) {}
 
-  @Get()
+  @Get('stats')
   @Roles('admin', 'analyst', 'readonly')
   @ApiRoleAuth('admin', 'analyst', 'readonly')
   @ApiOperation({ summary: 'Job counts and averages' })
@@ -53,5 +55,14 @@ export class StatsController {
       avg_tokens: completed > 0 ? Math.floor(totalTokens / completed) : 0,
       model: this.config.get<string>('ai.model'),
     };
+  }
+
+  @Get('playbooks')
+  @Roles('admin', 'analyst', 'readonly')
+  @ApiRoleAuth('admin', 'analyst', 'readonly')
+  @ApiOperation({ summary: 'Playbook index and Qdrant status' })
+  @ApiOkResponse({ type: PlaybookStatusResponse })
+  playbooks() {
+    return this.ai.playbookStatus();
   }
 }

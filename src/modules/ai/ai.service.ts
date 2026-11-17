@@ -160,4 +160,22 @@ export class AiService {
       return false;
     }
   }
+
+  /** Fetch playbook index and Qdrant status from soc-ai (`GET /playbooks`). */
+  async playbookStatus(): Promise<Record<string, unknown>> {
+    const { baseUrl, token } = this.config.get('ai');
+    try {
+      const { data } = await firstValueFrom(
+        this.http.get<Record<string, unknown>>(`${baseUrl}/playbooks`, {
+          timeout: 5000,
+          headers: bearer(token),
+        }),
+      );
+      return data;
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail ?? err?.message ?? 'unknown error';
+      this.logger.error(`Playbook status check failed: ${detail}`);
+      throw new ServiceUnavailableException(`AI service error: ${detail}`);
+    }
+  }
 }

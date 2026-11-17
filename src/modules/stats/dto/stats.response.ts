@@ -1,3 +1,5 @@
+import { ApiPropertyOptional } from '@nestjs/swagger';
+
 export class StatsResponse {
   total_jobs: number;
   pending: number;
@@ -14,4 +16,31 @@ export class StatsResponse {
 
   /** The model name the backend reports (OLLAMA_MODEL). */
   model: string;
+}
+
+export class PlaybookStatusResponse {
+  indexed: boolean;
+  playbooks: number;
+
+  @ApiPropertyOptional({ nullable: true })
+  source?: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  built_at?: string | null;
+
+  pages: number;
+
+  @ApiPropertyOptional({ type: 'array', items: { type: 'object' } })
+  skipped?: Array<Record<string, unknown>>;
+
+  @ApiPropertyOptional({ type: 'array', items: { type: 'object' } })
+  conflicts?: Array<Record<string, unknown>>;
+
+  names: number;
+
+  @ApiPropertyOptional({ type: 'object', additionalProperties: true })
+  semantic?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ type: 'object', additionalProperties: true })
+  vectordb?: Record<string, unknown>;
 }
