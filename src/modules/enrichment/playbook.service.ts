@@ -260,6 +260,12 @@ export class PlaybookService {
           `on the criteria below.`,
       );
     }
+    if (match.how === 'default') {
+      lines.push(
+        'NOT a playbook for this alert: no playbook covers it, so this is the generic triage ' +
+          'playbook. Follow its steps; its conditions are general, not this detection\'s.',
+      );
+    }
     if (match.stale) {
       lines.push('This came from the last good copy — the playbook source could not be re-read.');
     }
